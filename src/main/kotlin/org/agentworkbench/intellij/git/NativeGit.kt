@@ -4,6 +4,7 @@ import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import git4idea.config.GitExecutableManager
 
@@ -72,7 +73,10 @@ internal class NativeGit(private val executable: String = "git") {
                 throw IOException("Git 只读查询超时")
             }
             val text = output.get(1, TimeUnit.SECONDS)
-            check(process.exitValue() == 0) { "Git 只读查询失败" }
+            if (process.exitValue() != 0) {
+                LOG.warn("git ${arguments.joinToString(" ")} 在 ${root.path} 退出码 ${process.exitValue()}：${text.take(2000)}")
+                error("Git 只读查询失败")
+            }
             return text
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -101,6 +105,7 @@ internal class NativeGit(private val executable: String = "git") {
     }
 
     companion object {
+        private val LOG = Logger.getInstance(NativeGit::class.java)
         const val TIMEOUT_SECONDS = 10L
         const val MAX_OUTPUT = 1024 * 1024
         val CONFLICT_CODES = setOf("UU", "AA", "DD", "DU", "UD", "AU", "UA")

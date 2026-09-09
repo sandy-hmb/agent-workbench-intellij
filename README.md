@@ -61,8 +61,8 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
 
 1. 打开左侧 `Agent Workbench` Tool Window。
 2. 插件优先恢复当前 IDEA 项目已保存的 Kit；没有保存绑定时，会检查当前项目目录和直接子目录 `agent-workbench`，找到 `scripts/kit.py` 后自动绑定并读取。
-3. 如果没有自动发现，在侧栏填写 Kit 根目录 `/Users/huangmingbo/workspace/code/crm/agent-workbench` 和 Python `python3`，点击“绑定并刷新”。
-4. 点击“打开工作台”，进入工作区总览。
+3. 如果没有自动发现，在侧栏填写 Kit 根目录 `/Users/huangmingbo/workspace/code/crm/agent-workbench` 和 Python `python3`，点击“绑定并刷新”。也可以在 `Settings | Tools | Agent Workbench` 中配置绑定。
+4. 点击“打开工作台”，进入工作区总览；也可以通过 `Tools | 打开 Agent Workbench 工作台` 菜单（支持 Search Everywhere 搜索该动作）直接打开。
 
 父目录项目可以使用其 `.idea/vcs.xml` 中的多仓 Git mapping。若某个仓库尚未被当前 IDEA 项目接入，点击该仓库的 Git 操作时插件会先询问“接入并继续”，确认后只添加这个仓库的 mapping。
 
@@ -89,7 +89,7 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
 - `Diff` 只传递所选仓库的变更。
 - `Commit` 只把所选仓库的变更作为初始选区，最终提交由宿主对话框和用户确认。
 - `Branches` 和冲突处理只传递所选仓库的上下文。
-- `Fetch` 要求明确仓库和 remote，并保留逐仓结果。
+- `Fetch` 要求明确仓库和 remote，在后台任务中执行（可取消），结束后以宿主通知汇总逐仓结果。
 - 查看 Feature 不会 checkout 分支；需求分支比较使用记录中的固定 commit。
 
 插件不会自动 Fetch、stash、checkout、merge、解决冲突、提交、推送或修改工作流记录。

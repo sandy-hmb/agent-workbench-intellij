@@ -29,12 +29,12 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         val panel = WorkbenchPanel(project)
         try {
             val controls = descendants(panel)
-            val tabs = controls.filterIsInstance<WorkbenchTabs>().first { it.tabCount==7 }
-            assertEquals(listOf("概览", "文档", "计划", "变更", "验证", "流程", "扩展"), (0 until tabs.tabCount).map(tabs::titleAt))
+            val tabs = controls.filterIsInstance<WorkbenchTabs>().first { it.tabCount==6 }
+            assertEquals(listOf("概览", "文档", "计划", "变更", "验证", "流程"), (0 until tabs.tabCount).map(tabs::titleAt))
             val nav = controls.filterIsInstance<javax.swing.JButton>().mapNotNull { it.name }
             assertTrue(nav.containsAll(listOf("nav-overview","nav-features","nav-runs","nav-extensions")))
             assertTrue(controls.filterIsInstance<JComboBox<*>>().size >= 3)
-            assertTrue(controls.filterIsInstance<JTable>().all { !it.isCellEditable(0, 1) })
+            assertTrue(controls.filterIsInstance<JTable>().all { !it.model.isCellEditable(0, 1) })
             assertTrue(controls.filterIsInstance<JTextArea>().all { !it.isEditable })
         } finally { Disposer.dispose(panel) }
     }

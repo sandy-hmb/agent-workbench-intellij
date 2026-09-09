@@ -1,6 +1,8 @@
 package org.agentworkbench.intellij.git
 
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUiKind
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.ex.ActionUtil
@@ -35,10 +37,18 @@ internal class HostGit(private val project: Project) {
         }
     }
 
-    fun registerRoots(roots: Collection<Path>): List<Path> {
-        check(!project.isDisposed) { "项目已关闭" }
+    fun registerRoots(roots: Collection<Path>): List<Path> = applyMappings(canonicalGitRoots(roots))
+
+    /** 路径解析与 .git 检查是文件系统 IO，可在后台线程执行。 */
+    fun canonicalGitRoots(roots: Collection<Path>): List<Path> {
         val canonical = roots.map { it.toRealPath() }.distinct()
         canonical.forEach { require(Files.exists(it.resolve(".git"))) { "目录不是独立 Git 根：" + it } }
+        return canonical
+    }
+
+    /** 只做映射登记；传入的路径必须已经 canonicalGitRoots 处理过。 */
+    fun applyMappings(canonical: List<Path>): List<Path> {
+        check(!project.isDisposed) { "项目已关闭" }
         val manager = ProjectLevelVcsManager.getInstance(project)
         val existing = manager.directoryMappings
         val existingPaths = existing.mapNotNull { mapping ->
@@ -50,16 +60,16 @@ internal class HostGit(private val project: Project) {
         return added
     }
 
+    fun fetch(root: Path, remoteName: String): Result<Unit> = runCatching {
+        check(!project.isDisposed) { "项目已关闭" }
+        val repository = repository(root)
+        val remote = repository.remotes.singleOrNull { it.name == remoteName }
+            ?: error("未找到明确 remote：" + remoteName)
+        GitFetchSupport.fetchSupport(project).fetch(repository, remote).throwExceptionIfFailed()
+    }
+
     fun fetchAsync(root: Path, remoteName: String): Future<Result<Unit>> =
-        ApplicationManager.getApplication().executeOnPooledThread<Result<Unit>> {
-            runCatching {
-                check(!project.isDisposed) { "项目已关闭" }
-                val repository = repository(root)
-                val remote = repository.remotes.singleOrNull { it.name == remoteName }
-                    ?: error("未找到明确 remote：" + remoteName)
-                GitFetchSupport.fetchSupport(project).fetch(repository, remote).throwExceptionIfFailed()
-            }
-        }
+        ApplicationManager.getApplication().executeOnPooledThread<Result<Unit>> { fetch(root, remoteName) }
 
     fun rootFile(root: Path): VirtualFile? = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(root.toRealPath())
 
@@ -98,7 +108,7 @@ internal class HostGit(private val project: Project) {
                 val context = branchContext(file)
                 check(GitBranchUtil.guessRepositoryForOperation(project, context) == repository) { "宿主无法定位所选仓库" }
                 val action = ActionManager.getInstance().getAction(actionId) ?: error("宿主未提供分支管理")
-                ActionUtil.invokeAction(action, context, "AgentWorkbench", null, null)
+                ActionUtil.performAction(action, AnActionEvent.createEvent(context, null, "AgentWorkbench", ActionUiKind.NONE, null))
             }
             else -> error("不支持的宿主 Git 操作")
         }

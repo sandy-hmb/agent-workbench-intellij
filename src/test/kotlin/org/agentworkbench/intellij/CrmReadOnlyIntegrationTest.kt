@@ -67,7 +67,7 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
                             descendants(panel).filterIsInstance<javax.swing.JLabel>().any { it.text=="需求范围" }
                         },10)
                         settle(panel);capture(panel,"crm-feature-$theme")
-                        val tabs=descendants(panel).filterIsInstance<org.agentworkbench.intellij.ui.WorkbenchTabs>().first { it.tabCount==7 }
+                        val tabs=descendants(panel).filterIsInstance<org.agentworkbench.intellij.ui.WorkbenchTabs>().first { it.tabCount==6 }
                         tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.DOCUMENTS
                         PlatformTestUtil.waitWithEventsDispatching("文档正文", { service.snapshot().document!=null },10)
                         settle(panel);capture(panel,"crm-document-$theme")

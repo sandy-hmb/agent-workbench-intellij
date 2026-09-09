@@ -19,6 +19,7 @@ internal class WorkbenchSettings : PersistentStateComponent<WorkbenchSettings.Da
     data class Data(var preferences: MutableList<Preference> = mutableListOf(), var bindings: MutableList<Binding> = mutableListOf())
 
     private var data = Data()
+    private val canonicalCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     override fun getState(): Data = data
     override fun loadState(state: Data) { data = state }
 
@@ -38,8 +39,10 @@ internal class WorkbenchSettings : PersistentStateComponent<WorkbenchSettings.Da
         val project = canonical(projectRoot); val kit = canonical(kitRoot)
         data.bindings.removeIf { it.projectRoot == project }; data.bindings += Binding(project, kit)
     }
-    private fun canonical(path: String) = runCatching { Path.of(path).toRealPath().toString() }
-        .getOrElse { Path.of(path).toAbsolutePath().normalize().toString() }
+    private fun canonical(path: String) = canonicalCache.computeIfAbsent(path) {
+        runCatching { Path.of(it).toRealPath().toString() }
+            .getOrElse { _ -> Path.of(path).toAbsolutePath().normalize().toString() }
+    }
 
     companion object {
         const val MAX_POSITIONS = 100

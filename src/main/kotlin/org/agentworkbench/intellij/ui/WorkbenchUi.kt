@@ -187,6 +187,12 @@ internal class WorkbenchTabs : JPanel(BorderLayout()) {
     fun setTitleAt(index: Int, value: String) { buttons[index].text = value }
     private fun updateSelection() { buttons.forEachIndexed { i, b -> b.foreground = if (i == selectedIndex) WorkbenchUi.text else WorkbenchUi.muted; b.isBorderPainted = i == selectedIndex; b.border = if (i == selectedIndex) BorderFactory.createMatteBorder(0,0,2,0,WorkbenchUi.accent) else JBUI.Borders.empty(0,0,2,0) } }
 }
+/** Kit 目前用中文字面量表达审阅状态；集中在此处，Kit 一旦改为结构化枚举只需改这里。 */
+internal object KitSemantics {
+    const val REVIEW_APPROVED = "已批准"
+    fun reviewPending(value: String?): Boolean = value != null && value != REVIEW_APPROVED
+}
+
 internal fun JsonElement?.obj(): JsonObject? = if (this?.isJsonObject == true) asJsonObject else null
 internal fun JsonObject.str(key: String): String? = get(key)?.takeIf { it.isJsonPrimitive }?.asString
 internal fun JsonObject.objects(key: String) = get(key)?.takeIf { it.isJsonArray }?.asJsonArray?.mapNotNull { it.obj() }.orEmpty()

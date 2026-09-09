@@ -42,8 +42,8 @@ class WorkbenchVisualTest:BasePlatformTestCase() {
             try {
                 panel.setSize(1440,1000);panel.setActive(true);panel.selectFeature("demo")
                 waitText(panel,"需求范围")
-                val tabs=descendants(panel).filterIsInstance<WorkbenchTabs>().first { it.tabCount==7 }
-                assertEquals(listOf("概览","文档","计划 1/2","变更","验证","流程","扩展"),(0 until 7).map(tabs::titleAt))
+                val tabs=descendants(panel).filterIsInstance<WorkbenchTabs>().first { it.tabCount==6 }
+                assertEquals(listOf("概览","文档","计划 1/2","变更","验证","流程"),(0 until 6).map(tabs::titleAt))
                 val nav=descendants(panel).filterIsInstance<JButton>().mapNotNull { it.name }
                 assertTrue(nav.toString(),nav.containsAll(listOf("nav-overview","nav-features","nav-runs","nav-extensions","nav-repo/service")))
                 paint(panel,"sample-feature")

@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "org.agentworkbench"
-version = "0.1.1"
+version = "0.2"
 
 repositories {
     mavenCentral()
@@ -32,6 +32,7 @@ dependencies {
     implementation("org.commonmark:commonmark:0.30.0")
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.30.0")
     implementation("org.commonmark:commonmark-ext-task-list-items:0.30.0")
+    implementation("com.google.code.gson:gson:2.11.0")
     testImplementation(kotlin("test"))
 }
 

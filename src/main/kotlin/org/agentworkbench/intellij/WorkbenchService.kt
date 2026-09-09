@@ -4,6 +4,7 @@ import com.google.gson.JsonObject
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import org.agentworkbench.intellij.kit.InspectResponse
 import org.agentworkbench.intellij.kit.KitClient
@@ -19,6 +20,7 @@ internal class WorkbenchService : Disposable {
     private val file = WorkbenchVirtualFile()
     private val coordinator = RefreshCoordinator<Unit>()
     private val requests = ConcurrentHashMap<String, Future<*>>()
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
     private val lock = Any()
     @Volatile private var disposed = false
     @Volatile private var snapshot = Snapshot.empty()
@@ -26,24 +28,39 @@ internal class WorkbenchService : Disposable {
     fun file() = file
     fun snapshot() = snapshot
 
+    /** 快照变化时在 EDT 上通知；用事件替代界面侧的轮询。 */
+    fun subscribe(parent: Disposable, listener: () -> Unit) {
+        listeners.add(listener)
+        com.intellij.openapi.util.Disposer.register(parent) { listeners.remove(listener) }
+    }
+
     fun bind(kitRoot: String, python: String, callback: (Snapshot) -> Unit) {
-        if (kitRoot.isBlank() || python.isBlank()) return callback(snapshot.copy(error = "需要明确 Kit 根目录和 Python 解释器。"))
-        val root = runCatching { Path.of(kitRoot).toRealPath().toString() }.getOrElse { return callback(snapshot.copy(error = "Kit 根目录不可读取。")) }
-        val executable = resolvePython(python) ?: return callback(snapshot.copy(error = "Python 解释器不可执行。"))
-        val previousRoot = snapshot.kitRoot
-        if (previousRoot != root) {
-            if (previousRoot != null) cancelRoot(previousRoot)
-            synchronized(lock) { snapshot = Snapshot.empty(root, executable) }
+        if (kitRoot.isBlank() || python.isBlank()) return deliver(callback, snapshot.copy(error = "需要明确 Kit 根目录和 Python 解释器。"))
+        // 路径解析与 PATH 探测都是文件系统 IO，放到后台线程执行。
+        ApplicationManager.getApplication().executeOnPooledThread {
+            if (disposed) return@executeOnPooledThread
+            val root = runCatching { Path.of(kitRoot).toRealPath().toString() }.getOrElse { return@executeOnPooledThread deliver(callback, snapshot.copy(error = "Kit 根目录不可读取。")) }
+            val executable = resolvePython(python) ?: return@executeOnPooledThread deliver(callback, snapshot.copy(error = "Python 解释器不可执行。"))
+            val previousRoot = snapshot.kitRoot
+            if (previousRoot != root) {
+                if (previousRoot != null) cancelRoot(previousRoot)
+                synchronized(lock) { snapshot = Snapshot.empty(root, executable) }
+            }
+            request("workspace:$root", callback) { client ->
+                val response = client.inspect("workspace").getOrThrow()
+                ({ state: Snapshot, value: InspectResponse -> state.copy(workspace = value, error = null) }) to response
+            }
+            request("features:$root", callback) { client ->
+                val response = loadPages(client, "features")
+                val features = response.data!!.asJsonObject.getAsJsonArray("items").map { it.asJsonObject }
+                ({ state: Snapshot, _: InspectResponse -> state.copy(features = features, error = null) }) to response
+            }
         }
-        request("workspace:$root", callback) { client ->
-            val response = client.inspect("workspace").getOrThrow()
-            ({ state: Snapshot, value: InspectResponse -> state.copy(workspace = value, error = null) }) to response
-        }
-        request("features:$root", callback) { client ->
-            val response = loadPages(client, "features")
-            val features = response.data!!.asJsonObject.getAsJsonArray("items").map { it.asJsonObject }
-            ({ state: Snapshot, _: InspectResponse -> state.copy(features = features, error = null) }) to response
-        }
+    }
+
+    private fun deliver(callback: (Snapshot) -> Unit, state: Snapshot) {
+        if (disposed) return
+        ApplicationManager.getApplication().invokeLater { if (!disposed) callback(state) }
     }
 
     fun loadFeature(slug: String, callback: (Snapshot) -> Unit) {
@@ -51,7 +68,7 @@ internal class WorkbenchService : Disposable {
         requestFor("feature", slug, callback) { state, response -> if (state.selectedDetail == slug) state.copy(detail = response, error = null) else state }
     }
     fun loadDocument(slug: String, path: String, revision: String?, callback: (Snapshot) -> Unit) = requestFor("document", "$slug:$path", callback, listOf(slug, "--path", path) + (revision?.let { listOf("--revision", it) } ?: emptyList())) { state, response -> state.copy(document = response, error = null) }
-    fun loadVerification(slug: String, callback: (Snapshot) -> Unit) = requestFor("verification", slug, callback) { state, response -> state.copy(verification = response, error = null) }
+    fun loadVerification(slug: String, callback: (Snapshot) -> Unit) = loadVerification(slug, false, callback)
     fun loadVerification(slug: String, checkCode: Boolean, callback: (Snapshot) -> Unit) =
         requestFor("verification", "$slug:${if (checkCode) "code" else "records"}", callback, listOf(slug) + if (checkCode) listOf("--check-code") else emptyList()) { state, response -> state.copy(verification = response, error = null) }
     fun loadWorkflow(callback: (Snapshot) -> Unit) = requestFor("workflow", "", callback) { state, response -> state.copy(workflow = response, error = null) }
@@ -87,6 +104,7 @@ internal class WorkbenchService : Disposable {
                     val next = update(snapshot, response)
                     if (coordinator.succeed(key, generation, Unit, response.observedAt)) snapshot = next
                 } else if (coordinator.fail(key, generation, result.exceptionOrNull()?.message ?: "读取失败")) {
+                    LOG.warn("Inspect 请求失败：$key", result.exceptionOrNull())
                     snapshot = snapshot.copy(error = result.exceptionOrNull()?.message ?: "读取失败")
                 }
             }
@@ -94,7 +112,10 @@ internal class WorkbenchService : Disposable {
             while (requests.size > MAX_RESOURCES) requests.keys.firstOrNull()?.let { requests.remove(it)?.cancel(true) } ?: break
             val delivered = snapshot
             if (!disposed && coordinator.isCurrent(key, generation)) ApplicationManager.getApplication().invokeLater {
-                if (!disposed && snapshot.kitRoot == root && coordinator.isCurrent(key, generation)) callback(delivered)
+                if (!disposed && snapshot.kitRoot == root && coordinator.isCurrent(key, generation)) {
+                    callback(delivered)
+                    listeners.forEach { it() }
+                }
             }
         }
     }
@@ -137,6 +158,7 @@ internal class WorkbenchService : Disposable {
         companion object { fun empty(root: String? = null, python: String? = null) = Snapshot(root, python, null, emptyList(), null, null) }
     }
     companion object {
+        private val LOG = Logger.getInstance(WorkbenchService::class.java)
         const val MAX_RESOURCES = 100
         fun getInstance(project: Project): WorkbenchService = project.getService(WorkbenchService::class.java)
     }

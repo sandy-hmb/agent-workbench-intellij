@@ -1,6 +1,7 @@
 package org.agentworkbench.intellij.kit
 
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.openapi.diagnostic.Logger
 import java.io.InputStream
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
@@ -40,7 +41,8 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
                 throw InspectReadException(listOf(InspectDiagnostic("KIT_INSPECT_UNAVAILABLE",
                     "当前绑定的 Kit 尚不支持工作台查询，请升级此工作流仓的 Inspect 配套脚本后重新绑定。Kit：$root")))
             }
-            val response = InspectProtocol.parse(text, operation, root.toString()).getOrElse {
+            val response = InspectProtocol.parse(text, operation, root.toString()).getOrElse { failure ->
+                LOG.warn("Inspect $operation 响应不可解析（退出码 $exitCode）：${failure.message}；stderr=${processError.take(2000)}")
                 val diagnostic = if (exitCode != 0) InspectDiagnostic("KIT_PROCESS_FAILED",
                     "Kit 查询进程失败（退出码 $exitCode），请检查所绑定的 Kit 与 Python 解释器。")
                 else InspectDiagnostic("KIT_INVALID_RESPONSE",
@@ -48,7 +50,10 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
                 throw InspectReadException(listOf(diagnostic))
             }
             if (response.status == "error") throw InspectReadException(response.diagnostics)
-            if (exitCode != 0) throw InspectReadException(listOf(InspectDiagnostic("KIT_PROCESS_FAILED", "Kit 查询进程失败（退出码 $exitCode）。")))
+            if (exitCode != 0) {
+                LOG.warn("Inspect $operation 进程退出码 $exitCode；stderr=${processError.take(2000)}")
+                throw InspectReadException(listOf(InspectDiagnostic("KIT_PROCESS_FAILED", "Kit 查询进程失败（退出码 $exitCode）。")))
+            }
             response
         } finally {
             if (process.isAlive) process.destroyForcibly()
@@ -56,8 +61,44 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
         }
     }
 
+    /** 除 inspect 外的只读辅助命令（doctor/describe），返回原始 stdout；doctor 有 ERROR 时退出码为 1，仍属正常输出。 */
+    fun tool(subcommand: String, arguments: List<String> = emptyList()): Result<String> = runCatching {
+        require(subcommand in TOOLS) { "不支持的 Kit 命令" }
+        val root = kitRoot.toRealPath()
+        val entry = root.resolve("scripts/kit.py")
+        require(entry.isRegularFile()) { "未找到 Kit 入口" }
+        val command = GeneralCommandLine(python.absolutePathString()).apply {
+            withWorkDirectory(root.toFile())
+            addParameters("-B", entry.toString(), subcommand, *arguments.toTypedArray())
+        }
+        val process = command.createProcess()
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val stdout = pool.submit<String> { readBounded(process.inputStream, MAX_STDOUT, process) }
+            val stderr = pool.submit<String> { readBounded(process.errorStream, MAX_STDERR, process) }
+            var waited = 0
+            while (!process.waitFor(200, TimeUnit.MILLISECONDS)) {
+                if (Thread.currentThread().isInterrupted) error("Kit 命令已取消")
+                waited += 200
+                if (waited >= TIMEOUT_MILLIS) error("Kit 命令超时")
+            }
+            val text = stdout.get(1, TimeUnit.SECONDS)
+            val processError = stderr.get(1, TimeUnit.SECONDS)
+            if (process.exitValue() !in 0..1 || text.isBlank()) {
+                LOG.warn("kit $subcommand 退出码 ${process.exitValue()}；stderr=${processError.take(2000)}")
+                error("Kit 命令失败（退出码 ${process.exitValue()}）")
+            }
+            text
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+            pool.shutdownNow()
+        }
+    }
+
     private companion object {
+        val LOG = Logger.getInstance(KitClient::class.java)
         val OPERATIONS = setOf("workspace", "features", "feature", "document", "verification", "workflow", "runs", "run")
+        val TOOLS = setOf("doctor", "describe")
         const val TIMEOUT_MILLIS = 12_000
         const val VERIFY_TIMEOUT_MILLIS = 32_000
         const val MAX_STDOUT = 8 * 1024 * 1024

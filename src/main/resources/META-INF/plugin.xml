@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>org.agentworkbench.workbench</id>
   <name>Agent Workbench</name>
-  <vendor>Agent Workbench</vendor>
+  <vendor url="https://github.com/sandy-hmb/agent-workbench">Agent Workbench</vendor>
   <description><![CDATA[Agent Workbench provides a local read-only workspace and multi-repository Git workbench. 在 IntelliJ Platform 中查看工作区、需求和原生 Git 入口。]]></description>
   <depends>com.intellij.modules.platform</depends>
   <depends>com.intellij.modules.vcs</depends>
@@ -9,7 +9,14 @@
   <resource-bundle>messages.AgentWorkbenchBundle</resource-bundle>
   <extensions defaultExtensionNs="com.intellij">
     <projectService serviceImplementation="org.agentworkbench.intellij.WorkbenchService"/>
-    <toolWindow id="Agent Workbench" anchor="left" factoryClass="org.agentworkbench.intellij.ui.WorkbenchToolWindowFactory" canCloseContents="false"/>
+    <toolWindow id="Agent Workbench" anchor="left" icon="org.agentworkbench.intellij.ui.WorkbenchIcons.ToolWindow" factoryClass="org.agentworkbench.intellij.ui.WorkbenchToolWindowFactory" canCloseContents="false"/>
     <fileEditorProvider implementation="org.agentworkbench.intellij.ui.WorkbenchFileEditorProvider"/>
+    <projectConfigurable parentId="tools" id="org.agentworkbench.workbench.settings" displayName="Agent Workbench" instance="org.agentworkbench.intellij.ui.WorkbenchConfigurable"/>
+    <notificationGroup id="Agent Workbench" displayType="BALLOON"/>
   </extensions>
+  <actions>
+    <action id="AgentWorkbench.OpenWorkbench" class="org.agentworkbench.intellij.ui.OpenWorkbenchAction" text="打开 Agent Workbench 工作台" description="打开 Agent Workbench 只读工作台" icon="org.agentworkbench.intellij.ui.WorkbenchIcons.ToolWindow">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+  </actions>
 </idea-plugin>
