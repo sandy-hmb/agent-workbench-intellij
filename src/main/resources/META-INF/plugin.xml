@@ -1,0 +1,15 @@
+<idea-plugin>
+  <id>org.agentworkbench.workbench</id>
+  <name>Agent Workbench</name>
+  <vendor>Agent Workbench</vendor>
+  <description><![CDATA[Agent Workbench provides a local read-only workspace and multi-repository Git workbench. 在 IntelliJ Platform 中查看工作区、需求和原生 Git 入口。]]></description>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.vcs</depends>
+  <depends>Git4Idea</depends>
+  <resource-bundle>messages.AgentWorkbenchBundle</resource-bundle>
+  <extensions defaultExtensionNs="com.intellij">
+    <projectService serviceImplementation="org.agentworkbench.intellij.WorkbenchService"/>
+    <toolWindow id="Agent Workbench" anchor="left" factoryClass="org.agentworkbench.intellij.ui.WorkbenchToolWindowFactory" canCloseContents="false"/>
+    <fileEditorProvider implementation="org.agentworkbench.intellij.ui.WorkbenchFileEditorProvider"/>
+  </extensions>
+</idea-plugin>
