@@ -5,6 +5,7 @@ import com.google.gson.JsonObject
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import java.awt.*
@@ -14,18 +15,19 @@ import javax.swing.table.DefaultTableCellRenderer
 
 /** 原型的间距与层级使用原生组件实现，颜色跟随宿主深浅主题。 */
 internal object WorkbenchUi {
-    val bg = JBColor(Color(0xfafbfc), Color(0x181a1e))
-    val surface = JBColor(Color(0xf0f2f5), Color(0x202226))
-    val border = JBColor(Color(0xdce0e7), Color(0x34373e))
-    val text = JBColor(Color(0x242934), Color(0xe1e3e8))
-    val muted = JBColor(Color(0x656e7d), Color(0x959aa5))
-    val faint = JBColor(Color(0x87909e), Color(0x676e7a))
-    val accent = JBColor(Color(0x2c66bb), Color(0x76a7ff))
-    val selection = JBColor(Color(0xe5eefc), Color(0x273850))
-    val green = JBColor(Color(0x207855), Color(0x72c6a0))
-    val amber = JBColor(Color(0x97651c), Color(0xe6bb76))
-    val red = JBColor(Color(0xbd4156), Color(0xef8d93))
-    val purple = JBColor(Color(0x7859a9), Color(0xb6a0e3))
+    val bg = JBColor(Color(0xffffff), Color(0x1e1f22))
+    val surface = JBColor(Color(0xf7f8fa), Color(0x26282b))
+    val sidebarBg = JBColor(Color(0xf2f4f7), Color(0x2b2d30))
+    val border = JBColor(Color(0xdce0e7), Color(0x393b40))
+    val text = JBColor(Color(0x242934), Color(0xdfdfdf))
+    val muted = JBColor(Color(0x656e7d), Color(0x9da5b4))
+    val faint = JBColor(Color(0x87909e), Color(0x6f737a))
+    val accent = JBColor(Color(0x2c66bb), Color(0x3574f0))
+    val selection = JBColor(Color(0xe5eefc), Color(0x2e436e))
+    val green = JBColor(Color(0x207855), Color(0x59a869))
+    val amber = JBColor(Color(0x97651c), Color(0xe5a158))
+    val red = JBColor(Color(0xbd4156), Color(0xdb5c5c))
+    val purple = JBColor(Color(0x7859a9), Color(0xb99bf8))
 
     fun label(value: String, size: Int = 13, color: Color = text, bold: Boolean = false) = JBLabel(value).apply {
         foreground = color; font = UIUtil.getLabelFont().deriveFont(if (bold) Font.BOLD else Font.PLAIN, JBUI.scale(size).toFloat())
@@ -85,9 +87,26 @@ internal object WorkbenchUi {
         font = UIUtil.getLabelFont().deriveFont(Font.PLAIN,JBUI.scale(11).toFloat()); isFocusPainted = true; cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         addActionListener { action() }
     }
-    fun badge(value: String, color: Color = accent) = label(value, 10, color).apply {
-        isOpaque = true; background = JBColor(Color(color.red, color.green, color.blue, 22), Color(color.red, color.green, color.blue, 25))
-        border = JBUI.Borders.empty(3, 6)
+    fun badge(value: String, color: Color = accent) = object : JLabel(value) {
+        init {
+            font = JBFont.regular().deriveFont(JBUI.scaleFontSize(10.5f))
+            foreground = color
+            isOpaque = false
+            border = JBUI.Borders.empty(3, 8)
+        }
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val bgCol = Color(color.red, color.green, color.blue, if (UIUtil.isUnderDarcula()) 45 else 28)
+            val borderCol = Color(color.red, color.green, color.blue, if (UIUtil.isUnderDarcula()) 90 else 60)
+            val arc = JBUI.scale(10)
+            g2.color = bgCol
+            g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.color = borderCol
+            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.dispose()
+            super.paintComponent(g)
+        }
     }
     fun metric(name: String, value: String, sub: String = "", color: Color = text, large: Boolean = false): JPanel = column(8,
         label(name, 11, muted), label(value, if (large) 26 else 14, color, true), label(sub, 10, faint))
@@ -199,15 +218,54 @@ internal fun JsonObject.objects(key: String) = get(key)?.takeIf { it.isJsonArray
 internal fun JsonElement?.texts(): String = if (this?.isJsonArray == true) asJsonArray.joinToString { if (it.isJsonPrimitive) it.asString else "" } else ""
 internal fun JsonElement?.text(): String = if (this == null || isJsonNull) "—" else if (isJsonPrimitive) asString else toString()
 
-internal class TimelineMarker(private val current:Boolean,private val extension:Boolean):JPanel() {
-    init { isOpaque=false;preferredSize=Dimension(JBUI.scale(18),1) }
-    override fun paintComponent(graphics:Graphics) {
+internal class TimelineMarker(
+    private val current: Boolean,
+    private val extension: Boolean,
+    private val stageTitle: String? = null,
+    private val stageState: String? = null
+) : JPanel() {
+    init {
+        isOpaque = false
+        preferredSize = Dimension(JBUI.scale(22), 1)
+        if (stageTitle != null) {
+            toolTipText = buildString {
+                append("<html><b>").append(stageTitle).append("</b>")
+                if (stageState != null) append("<br/>状态: ").append(stageState)
+                if (current) append("<br/><i>(当前阶段)</i>")
+                append("</html>")
+            }
+        }
+    }
+
+    override fun paintComponent(graphics: Graphics) {
         super.paintComponent(graphics)
-        val g=graphics.create() as Graphics2D
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON)
-        val x=width/2;val y=JBUI.scale(13);g.color=WorkbenchUi.border;g.drawLine(x,0,x,height)
-        g.color=WorkbenchUi.bg;g.fillOval(x-5,y-5,10,10);g.color=if(current) WorkbenchUi.accent else if(extension) WorkbenchUi.purple else WorkbenchUi.faint
-        if(extension) g.drawPolygon(intArrayOf(x,x+5,x,x-5),intArrayOf(y-5,y,y+5,y),4) else g.drawOval(x-5,y-5,10,10)
+        val g = graphics.create() as Graphics2D
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        val x = width / 2
+        val y = JBUI.scale(14)
+        val r = JBUI.scale(5)
+        g.color = WorkbenchUi.border
+        g.stroke = BasicStroke(JBUI.scale(1.5f))
+        g.drawLine(x, 0, x, height)
+
+        val markerColor = if (current) WorkbenchUi.accent else if (extension) WorkbenchUi.purple else WorkbenchUi.faint
+        if (current) {
+            // 外圈光晕扩散
+            val glowColor = Color(markerColor.red, markerColor.green, markerColor.blue, if (UIUtil.isUnderDarcula()) 60 else 40)
+            g.color = glowColor
+            g.fillOval(x - r - JBUI.scale(3), y - r - JBUI.scale(3), (r + JBUI.scale(3)) * 2, (r + JBUI.scale(3)) * 2)
+        }
+
+        g.color = WorkbenchUi.bg
+        g.fillOval(x - r, y - r, r * 2, r * 2)
+        g.color = markerColor
+        g.stroke = BasicStroke(JBUI.scale(if (current) 2f else 1.5f))
+        if (extension) {
+            val d = r + 1
+            g.drawPolygon(intArrayOf(x, x + d, x, x - d), intArrayOf(y - d, y, y + d, y), 4)
+        } else {
+            g.drawOval(x - r, y - r, r * 2, r * 2)
+        }
         g.dispose()
     }
 }

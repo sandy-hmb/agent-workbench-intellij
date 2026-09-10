@@ -19,6 +19,13 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.vcs.log.impl.VcsProjectLog
 import com.intellij.vcs.log.visible.filters.VcsLogFilterObject
+import com.intellij.vcsUtil.VcsUtil
+import com.intellij.diff.DiffContentFactory
+import com.intellij.diff.DiffManager
+import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.openapi.fileTypes.FileTypeRegistry
+import git4idea.GitRevisionNumber
+import git4idea.GitContentRevision
 import git4idea.branch.GitBranchUtil
 import git4idea.branch.GitBrancher
 import git4idea.fetch.GitFetchSupport
@@ -115,9 +122,66 @@ internal class HostGit(private val project: Project) {
         Unit
     }
 
-    fun showCommittedDiff(root: Path, baseCommit: String, workCommit: String): Result<Unit> = runCatching {
-        require(COMMIT_ID.matches(baseCommit) && COMMIT_ID.matches(workCommit)) { "比较必须使用已解析的固定 commit ID" }
-        GitBrancher.getInstance(project).showDiff(baseCommit, workCommit, listOf(repository(root)))
+    fun showCommittedDiff(root: Path, baseOrWorkRef: String, compareRef: String): Result<Unit> = runCatching {
+        GitBrancher.getInstance(project).showDiff(baseOrWorkRef, compareRef, listOf(repository(root)))
+    }
+
+    fun showBranchDiff(
+        root: Path,
+        baseCommit: String,
+        workCommit: String,
+        relativePath: String,
+        baseLabel: String = "基线版本",
+        workLabel: String = "需求分支版本"
+    ): Result<Unit> = runCatching {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val repository = repository(root)
+        val file = root.resolve(relativePath).toFile()
+        val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+            ?: VcsUtil.getVirtualFile(file)
+        val filePath = virtualFile?.let { VcsUtil.getFilePath(it) } ?: VcsUtil.getFilePath(file, false)
+
+        val baseRevision = GitContentRevision.createRevision(filePath, GitRevisionNumber(baseCommit), project, null)
+        val workRevision = GitContentRevision.createRevision(filePath, GitRevisionNumber(workCommit), project, null)
+
+        val factory = DiffContentFactory.getInstance()
+        val fileType = virtualFile?.fileType ?: FileTypeRegistry.getInstance().getFileTypeByFileName(file.name)
+        val baseContent = factory.create(project, baseRevision.content ?: "", fileType)
+        val workContent = factory.create(project, workRevision.content ?: "", fileType)
+
+        val request = SimpleDiffRequest(
+            "变更比对：$relativePath ($baseLabel..$workLabel)",
+            baseContent,
+            workContent,
+            "$baseLabel (${baseCommit.take(8)})",
+            "$workLabel (${workCommit.take(8)})"
+        )
+        DiffManager.getInstance().showDiff(project, request)
+    }
+
+    fun showWorkspaceDiff(root: Path, baseCommit: String, relativePath: String): Result<Unit> = runCatching {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val repository = repository(root)
+        val file = root.resolve(relativePath).toFile()
+        val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+            ?: error("在工作区中未找到本地文件：$relativePath")
+
+        val filePath = VcsUtil.getFilePath(virtualFile)
+        val revision = GitRevisionNumber(baseCommit)
+        val contentRevision = GitContentRevision.createRevision(filePath, revision, project, null)
+
+        val factory = DiffContentFactory.getInstance()
+        val historicContent = factory.create(project, contentRevision.content ?: "", virtualFile.fileType)
+        val localContent = factory.create(project, virtualFile)
+
+        val request = SimpleDiffRequest(
+            "变更比对：$relativePath",
+            historicContent,
+            localContent,
+            "基线版本 ($baseCommit)",
+            "工作区当前版本"
+        )
+        DiffManager.getInstance().showDiff(project, request)
     }
 
     fun changesForRoot(root: VirtualFile, changes: Collection<Change>): List<Change> {
@@ -139,7 +203,7 @@ internal class HostGit(private val project: Project) {
         }
     }
 
-    private fun repository(root: Path) = GitRepositoryManager.getInstance(project).repositories
+    internal fun repository(root: Path) = GitRepositoryManager.getInstance(project).repositories
         .singleOrNull { runCatching { it.root.toNioPath().toRealPath() == root.toRealPath() }.getOrDefault(false) }
         ?: throw UnrecognizedRepository(root)
 

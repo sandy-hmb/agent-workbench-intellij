@@ -13,6 +13,8 @@
     <fileEditorProvider implementation="org.agentworkbench.intellij.ui.WorkbenchFileEditorProvider"/>
     <projectConfigurable parentId="tools" id="org.agentworkbench.workbench.settings" displayName="Agent Workbench" instance="org.agentworkbench.intellij.ui.WorkbenchConfigurable"/>
     <notificationGroup id="Agent Workbench" displayType="BALLOON"/>
+    <statusBarWidgetFactory id="AgentWorkbenchStatus" implementation="org.agentworkbench.intellij.ui.WorkbenchStatusBarWidgetFactory"/>
+    <externalAnnotator language="ANY" implementationClass="org.agentworkbench.intellij.ui.AgentVerificationAnnotator"/>
   </extensions>
   <actions>
     <action id="AgentWorkbench.OpenWorkbench" class="org.agentworkbench.intellij.ui.OpenWorkbenchAction" text="打开 Agent Workbench 工作台" description="打开 Agent Workbench 只读工作台" icon="org.agentworkbench.intellij.ui.WorkbenchIcons.ToolWindow">

@@ -24,6 +24,10 @@ IDEA / Rebased
 
 ## 快速开始
 
+- [🚀 5 分钟极速上手指南 (QUICKSTART.md)](QUICKSTART.md)：适合新用户的端到端安装与基础操作导览
+- [📖 详细用户指南与最佳实践 (docs/USER_GUIDE.md)](docs/USER_GUIDE.md)：涵盖多仓配置规范、Git 比对模型、排障 FAQ 的完整手册
+- [🎨 UI/UX 设计规范 (design.md)](design.md)：JetBrains New UI 令牌与界面布局设计契约
+
 ### 前置条件
 
 - IntelliJ IDEA 2025.2（Build 252）或 Rebased 1.1.12（Build 262）及兼容版本。
@@ -33,7 +37,9 @@ IDEA / Rebased
 
 ### 安装开发包
 
-在本仓执行：
+可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.2.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
+
+如需从源码构建，在本仓执行：
 
 ```bash
 JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
@@ -49,19 +55,19 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
 推荐打开包含 Kit 和业务仓的父目录，例如：
 
 ```text
-/Users/huangmingbo/workspace/code/crm
+my-project-workspace/
 ├── agent-workbench       # 工作流 Kit
-├── crm_java-master       # 业务仓
-├── crmadminfront         # 业务仓
-├── crmapp                # 业务仓
-└── crm-e2e               # 业务仓
+├── order-service         # 业务微服务仓 A
+├── payment-service       # 业务微服务仓 B
+├── inventory-service     # 业务微服务仓 C
+└── admin-frontend        # 前端管理后台仓
 ```
 
 打开父目录后：
 
 1. 打开左侧 `Agent Workbench` Tool Window。
 2. 插件优先恢复当前 IDEA 项目已保存的 Kit；没有保存绑定时，会检查当前项目目录和直接子目录 `agent-workbench`，找到 `scripts/kit.py` 后自动绑定并读取。
-3. 如果没有自动发现，在侧栏填写 Kit 根目录 `/Users/huangmingbo/workspace/code/crm/agent-workbench` 和 Python `python3`，点击“绑定并刷新”。也可以在 `Settings | Tools | Agent Workbench` 中配置绑定。
+3. 如果没有自动发现，在侧栏填写 Kit 根目录 `/path/to/my-project-workspace/agent-workbench` 和 Python `python3`，点击“绑定并刷新”。也可以在 `Settings | Tools | Agent Workbench` 中配置绑定。
 4. 点击“打开工作台”，进入工作区总览；也可以通过 `Tools | 打开 Agent Workbench 工作台` 菜单（支持 Search Everywhere 搜索该动作）直接打开。
 
 父目录项目可以使用其 `.idea/vcs.xml` 中的多仓 Git mapping。若某个仓库尚未被当前 IDEA 项目接入，点击该仓库的 Git 操作时插件会先询问“接入并继续”，确认后只添加这个仓库的 mapping。
@@ -114,7 +120,7 @@ python3 scripts/kit.py inspect --root . --api-major 1 --json workspace
 
 ### 点击仓库操作提示“宿主未识别独立 Git 仓库”
 
-优先用 `/crm` 这样的父目录打开 IDEA，让父项目加载全部 `.idea/vcs.xml` mapping。也可以在仓库表中选择该仓，点击“接入所选仓库”；新版插件的单仓 Git 操作会自动给出“接入并继续”确认。
+优先用包含各子仓的父目录打开 IDEA，让父项目加载全部 `.idea/vcs.xml` mapping。也可以在仓库表中选择该仓，点击“接入所选仓库”；新版插件的单仓 Git 操作会自动给出“接入并继续”确认。
 
 ### 工作台没有数据
 
@@ -134,6 +140,6 @@ python3 scripts/kit.py inspect --root . --api-major 1 --json workspace
 ./gradlew -PsmokeRoot=/path/to/test/kit runRebased
 ```
 
-测试使用独立平台沙箱；`CrmReadOnlyIntegrationTest` 只有显式传入 `integrationRoot` 和 `integrationEntry` 时才读取真实 CRM，所有查询保持只读。Rebased 平台测试和 Plugin Verifier 需要单独检查，构建成功不等于所有宿主版本都已验收。
+测试使用独立平台沙箱；集成测试只有显式传入 `integrationRoot` 和 `integrationEntry` 时才读取外部工作区，所有查询保持只读。Rebased 平台测试和 Plugin Verifier 需要单独检查，构建成功不等于所有宿主版本都已验收。
 
 需求、设计、实施计划和宿主验收记录集中维护在相邻 Kit 仓库的 [`docs/development/features/intellij-workbench-v1/`](https://github.com/sandy-hmb/agent-workbench/tree/main/docs/development/features/intellij-workbench-v1)。Kit 的 Inspect 契约见 [`docs/reference/workbench-inspect.md`](https://github.com/sandy-hmb/agent-workbench/blob/main/docs/reference/workbench-inspect.md)，工作流仓库见 [`sandy-hmb/agent-workbench`](https://github.com/sandy-hmb/agent-workbench)。

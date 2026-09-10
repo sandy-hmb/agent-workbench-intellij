@@ -6,24 +6,108 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import org.agentworkbench.intellij.kit.InspectResponse
 import org.agentworkbench.intellij.kit.KitClient
 import org.agentworkbench.intellij.ui.WorkbenchVirtualFile
+import git4idea.repo.GitRepository
+import git4idea.repo.GitRepositoryChangeListener
+import git4idea.repo.GitRepositoryManager
 import java.nio.file.Path
 import java.nio.file.Files
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Future
 
 @Service(Service.Level.PROJECT)
-internal class WorkbenchService : Disposable {
+internal class WorkbenchService(private val project: Project) : Disposable {
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private val coroutineJobs = ConcurrentHashMap<String, Job>()
     private val file = WorkbenchVirtualFile()
     private val coordinator = RefreshCoordinator<Unit>()
-    private val requests = ConcurrentHashMap<String, Future<*>>()
+    
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
     private val lock = Any()
     @Volatile private var disposed = false
     @Volatile private var snapshot = Snapshot.empty()
+
+    @Volatile private var currentBranchSlug: String? = null
+
+    init {
+        val connection = project.messageBus.connect(this)
+        connection.subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
+            override fun after(events: List<VFileEvent>) {
+                val root = snapshot.kitRoot ?: return
+                if (events.any { it.path.startsWith(root) }) {
+                    // Debounce is naturally handled by the coordinator's generation system
+                    bind(root, snapshot.python ?: "") { }
+                }
+            }
+        })
+        connection.subscribe(GitRepository.GIT_REPO_CHANGE, GitRepositoryChangeListener { _ ->
+            updateBranchSlug()
+        })
+    }
+
+    fun currentBranchSlug(): String? = currentBranchSlug
+
+    private fun updateBranchSlug() {
+        val features = snapshot.features
+        val gitMgr = runCatching { GitRepositoryManager.getInstance(project) }.getOrNull() ?: return
+        val repos = gitMgr.repositories
+        if (repos.isEmpty() || features.isEmpty()) {
+            if (currentBranchSlug != null) {
+                currentBranchSlug = null
+                ApplicationManager.getApplication().invokeLater {
+                    if (!disposed) listeners.forEach { it() }
+                }
+            }
+            return
+        }
+
+        val repoBranches = repos.mapNotNull { repo ->
+            val branch = repo.currentBranchName ?: return@mapNotNull null
+            repo.root.name to branch
+        }
+
+        var matched: String? = null
+        for (feature in features) {
+            val slug = feature.get("slug")?.asString ?: continue
+            val reposArray = feature.getAsJsonArray("repositories") ?: continue
+            for (repoElem in reposArray) {
+                if (!repoElem.isJsonObject) continue
+                val rObj = repoElem.asJsonObject
+                val rId = rObj.get("id")?.asString
+                val rPath = rObj.get("path")?.asString
+                val branch = rObj.get("workBranch")?.asString ?: rObj.get("branch")?.asString
+                if (branch == null) continue
+
+                for ((currentRepoName, currentBranch) in repoBranches) {
+                    if (currentBranch == branch && (currentRepoName == rId || currentRepoName == rPath || rPath?.endsWith("/$currentRepoName") == true)) {
+                        matched = slug
+                        break
+                    }
+                }
+                if (matched != null) break
+            }
+            if (matched != null) break
+        }
+
+        if (matched != currentBranchSlug) {
+            currentBranchSlug = matched
+            ApplicationManager.getApplication().invokeLater {
+                if (!disposed) {
+                    listeners.forEach { it() }
+                }
+            }
+        }
+    }
 
     fun file() = file
     fun snapshot() = snapshot
@@ -37,10 +121,10 @@ internal class WorkbenchService : Disposable {
     fun bind(kitRoot: String, python: String, callback: (Snapshot) -> Unit) {
         if (kitRoot.isBlank() || python.isBlank()) return deliver(callback, snapshot.copy(error = "需要明确 Kit 根目录和 Python 解释器。"))
         // 路径解析与 PATH 探测都是文件系统 IO，放到后台线程执行。
-        ApplicationManager.getApplication().executeOnPooledThread {
-            if (disposed) return@executeOnPooledThread
-            val root = runCatching { Path.of(kitRoot).toRealPath().toString() }.getOrElse { return@executeOnPooledThread deliver(callback, snapshot.copy(error = "Kit 根目录不可读取。")) }
-            val executable = resolvePython(python) ?: return@executeOnPooledThread deliver(callback, snapshot.copy(error = "Python 解释器不可执行。"))
+        scope.launch {
+            if (disposed) return@launch
+            val root = runCatching { Path.of(kitRoot).toRealPath().toString() }.getOrElse { return@launch deliver(callback, snapshot.copy(error = "Kit 根目录不可读取。")) }
+            val executable = resolvePython(python) ?: return@launch deliver(callback, snapshot.copy(error = "Python 解释器不可执行。"))
             val previousRoot = snapshot.kitRoot
             if (previousRoot != root) {
                 if (previousRoot != null) cancelRoot(previousRoot)
@@ -60,6 +144,7 @@ internal class WorkbenchService : Disposable {
 
     private fun deliver(callback: (Snapshot) -> Unit, state: Snapshot) {
         if (disposed) return
+        updateBranchSlug()
         ApplicationManager.getApplication().invokeLater { if (!disposed) callback(state) }
     }
 
@@ -80,6 +165,18 @@ internal class WorkbenchService : Disposable {
     }
     fun loadRun(id: String, callback: (Snapshot) -> Unit) = requestFor("run", id, callback) { state, response -> state.copy(run = response, error = null) }
 
+    /** 异步获取需求在 Agent 场景下的执行上下文 Brief，并回调结果。 */
+    fun fetchBriefPrompt(slug: String, callback: (Result<String>) -> Unit) {
+        val root = snapshot.kitRoot ?: return callback(Result.failure(IllegalStateException("未配置 Kit 根目录")))
+        val py = snapshot.python ?: return callback(Result.failure(IllegalStateException("未配置 Python 解释器")))
+        scope.launch {
+            val result = KitClient(Path.of(py), Path.of(root)).tool("brief", listOf(slug, "--root", root, "--execution"))
+            ApplicationManager.getApplication().invokeLater {
+                if (!disposed) callback(result)
+            }
+        }
+    }
+
     private fun requestFor(operation: String, subject: String, callback: (Snapshot) -> Unit, arguments: List<String> = if (subject.isBlank()) emptyList() else listOf(subject), update: (Snapshot, InspectResponse) -> Snapshot) {
         val current = snapshot
         if (current.kitRoot == null || current.python == null || disposed) return
@@ -90,14 +187,14 @@ internal class WorkbenchService : Disposable {
         val current = snapshot
         val root = current.kitRoot ?: return
         val python = current.python ?: return
-        requests.remove(key)?.cancel(true)
+        coroutineJobs.remove(key)?.cancel()
         val generation = coordinator.begin(key)
-        requests[key] = ApplicationManager.getApplication().executeOnPooledThread {
+        coroutineJobs[key] = scope.launch {
             val result = runCatching { coordinator.bounded { task(KitClient(Path.of(python), Path.of(root))) } }
             if (disposed || snapshot.kitRoot != root) {
-                return@executeOnPooledThread
+                return@launch
             }
-            if (!coordinator.isCurrent(key, generation)) return@executeOnPooledThread
+            if (!coordinator.isCurrent(key, generation)) return@launch
             synchronized(lock) {
                 if (result.isSuccess) {
                     val (update, response) = result.getOrThrow()
@@ -109,7 +206,7 @@ internal class WorkbenchService : Disposable {
                 }
             }
             coordinator.trim(MAX_RESOURCES)
-            while (requests.size > MAX_RESOURCES) requests.keys.firstOrNull()?.let { requests.remove(it)?.cancel(true) } ?: break
+            while (coroutineJobs.size > MAX_RESOURCES) coroutineJobs.keys.firstOrNull()?.let { coroutineJobs.remove(it)?.cancel() } ?: break
             val delivered = snapshot
             if (!disposed && coordinator.isCurrent(key, generation)) ApplicationManager.getApplication().invokeLater {
                 if (!disposed && snapshot.kitRoot == root && coordinator.isCurrent(key, generation)) {
@@ -144,7 +241,7 @@ internal class WorkbenchService : Disposable {
         error("列表在分页期间持续变化")
     }
 
-    private fun cancelRoot(root: String) = requests.filterKeys { it.contains(":$root") }.forEach { (key, future) -> future.cancel(true); coordinator.invalidate(key) }
+    private fun cancelRoot(root: String) = coroutineJobs.filterKeys { it.contains(":$root") }.forEach { (key, job) -> job.cancel(); coordinator.invalidate(key) }
     private fun resolvePython(value: String): String? {
         val direct = runCatching { Path.of(value) }.getOrNull()
         if (direct != null && direct.isAbsolute && Files.isExecutable(direct)) return direct.toRealPath().toString()
@@ -152,7 +249,31 @@ internal class WorkbenchService : Disposable {
         return System.getenv("PATH")?.split(java.io.File.pathSeparator)?.asSequence()
             ?.map { Path.of(it, value) }?.firstOrNull(Files::isExecutable)?.toRealPath()?.toString()
     }
-    override fun dispose() { disposed = true; requests.values.forEach { it.cancel(true) }; requests.clear() }
+    fun copyPrompt(slug: String, callback: (Result<String>) -> Unit) {
+        val root = snapshot.kitRoot ?: return callback(Result.failure(IllegalStateException("未配置 Kit 根目录")))
+        val python = snapshot.python ?: return callback(Result.failure(IllegalStateException("未配置 Python 解释器")))
+        scope.launch {
+            if (disposed) return@launch
+            val result = KitClient(Path.of(python), Path.of(root)).tool("brief", listOf(slug, "--root", root, "--execution"))
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                if (!disposed) callback(result)
+            }
+        }
+    }
+
+    fun runDoctor(callback: (Result<String>) -> Unit) {
+        val root = snapshot.kitRoot ?: return callback(Result.failure(IllegalStateException("未配置 Kit 根目录")))
+        val python = snapshot.python ?: return callback(Result.failure(IllegalStateException("未配置 Python 解释器")))
+        scope.launch {
+            if (disposed) return@launch
+            val result = KitClient(Path.of(python), Path.of(root)).tool("doctor", listOf("--root", root, "--json"))
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                if (!disposed) callback(result)
+            }
+        }
+    }
+
+    override fun dispose() { disposed = true; coroutineJobs.values.forEach { it.cancel() }; coroutineJobs.clear() }
 
     data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val features: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null) {
         companion object { fun empty(root: String? = null, python: String? = null) = Snapshot(root, python, null, emptyList(), null, null) }

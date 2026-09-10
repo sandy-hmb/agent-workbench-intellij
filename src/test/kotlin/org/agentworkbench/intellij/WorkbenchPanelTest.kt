@@ -30,7 +30,7 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         try {
             val controls = descendants(panel)
             val tabs = controls.filterIsInstance<WorkbenchTabs>().first { it.tabCount==6 }
-            assertEquals(listOf("概览", "文档", "计划", "变更", "验证", "流程"), (0 until tabs.tabCount).map(tabs::titleAt))
+            assertEquals(listOf("总览与说明", "PRD 规范文档", "任务拆解与执行", "代码变更与比对", "验证与测试", "流程"), (0 until tabs.tabCount).map(tabs::titleAt))
             val nav = controls.filterIsInstance<javax.swing.JButton>().mapNotNull { it.name }
             assertTrue(nav.containsAll(listOf("nav-overview","nav-features","nav-runs","nav-extensions")))
             assertTrue(controls.filterIsInstance<JComboBox<*>>().size >= 3)

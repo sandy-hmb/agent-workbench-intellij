@@ -1,9 +1,12 @@
 package org.agentworkbench.intellij.ui
 
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.ide.trustedProjects.TrustedProjects
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.wm.ToolWindow
@@ -25,68 +28,66 @@ class WorkbenchToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val settings = WorkbenchSettings.getInstance()
         val projectRoot = project.basePath.orEmpty()
-        val kitRoot = TextFieldWithBrowseButton().apply {
-            addBrowseFolderListener(project, FileChooserDescriptorFactory.createSingleFolderDescriptor().withTitle("选择 Kit 根目录"))
-            text = projectRoot
-        }
-        val python = TextFieldWithBrowseButton().apply {
-            addBrowseFolderListener(project, FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor().withTitle("选择 Python 解释器"))
-            text = "python3"
-        }
-        val status = JBLabel("正在探测工作流 Kit…")
-        val bind = {
-            if (!TrustedProjects.isProjectTrusted(project)) {
-                status.text = "项目未受信任，不能启动 Kit 查询。"
-            } else {
-                status.text = "正在读取工作区…"
-                WorkbenchService.getInstance(project).bind(kitRoot.text, python.text) { state ->
-                    if (state.workspace != null && state.kitRoot != null) runCatching {
-                        settings.rememberBinding(projectRoot, state.kitRoot)
-                        settings.preference(state.kitRoot).python = state.python ?: python.text
-                    }
-                    status.text = state.error ?: "已读取工作区；打开工作台查看。"
-                }
+        
+        // 1. 挂载专注侧边栏形态的导航树面板 (WorkbenchToolWindowPanel)
+        val panel = WorkbenchToolWindowPanel(project)
+        val content = ContentFactory.getInstance().createContent(panel, "", false)
+        toolWindow.contentManager.addContent(content)
+
+        // 标题栏操作：支持一键在主编辑区打开全屏视图
+        val openInEditorAction = object : DumbAwareAction(
+            "在主编辑区打开",
+            "在主编辑区打开 Agent Workbench 全屏视图",
+            AllIcons.Actions.OpenNewTab
+        ) {
+            override fun actionPerformed(e: AnActionEvent) {
+                openWorkbench(project)
             }
         }
-        val content = JPanel(BorderLayout(0, 8)).apply {
-            accessibleContext.accessibleName = "Agent Workbench 导航"
-            border = JBUI.Borders.empty(8)
-            add(JBLabel("Agent Workbench", WorkbenchIcons.ToolWindow, JBLabel.LEADING), BorderLayout.NORTH)
-            add(JPanel(GridLayout(2, 1, 0, 6)).apply {
-                add(row("Kit 根目录", kitRoot))
-                add(row("Python", python))
-            }, BorderLayout.CENTER)
-            add(JPanel(BorderLayout(8, 0)).apply {
-                add(JButton("绑定并刷新").apply {
-                    addActionListener { bind() }
-                }, BorderLayout.WEST)
-                add(JButton("打开工作台").apply { addActionListener { openWorkbench(project) } }, BorderLayout.CENTER)
-                add(status, BorderLayout.SOUTH)
-            }, BorderLayout.SOUTH)
-        }
-        toolWindow.contentManager.addContent(ContentFactory.getInstance().createContent(content, "", false))
-        // 保存的绑定与自动探测都要做文件系统 IO，放到后台线程完成后再回填表单。
+        toolWindow.setTitleActions(listOf(openInEditorAction))
+
+        // 绑定 ToolWindow 的可见/激活状态，确保侧边栏展开时实时刷新
+        project.messageBus.connect(panel).subscribe(
+            com.intellij.openapi.wm.ex.ToolWindowManagerListener.TOPIC,
+            object : com.intellij.openapi.wm.ex.ToolWindowManagerListener {
+                override fun stateChanged(
+                    toolWindowManager: com.intellij.openapi.wm.ToolWindowManager,
+                    tw: ToolWindow,
+                    changeType: com.intellij.openapi.wm.ex.ToolWindowManagerListener.ToolWindowManagerEventType
+                ) {
+                    if (tw.id == toolWindow.id && tw.isVisible) {
+                        panel.refresh()
+                    }
+                }
+            }
+        )
+
+        // 2. 异步尝试自动探测并绑定
         ApplicationManager.getApplication().executeOnPooledThread {
             val savedKit = runCatching { settings.kitForProject(projectRoot) }.getOrNull()
             val suggestedKit = projectRoot.takeIf(String::isNotBlank)?.let { suggestKitRoot(Path.of(it), savedKit) }
-            val suggestedPython = suggestedKit?.let { settings.preference(it.toString()).python }
-            ApplicationManager.getApplication().invokeLater {
-                if (project.isDisposed) return@invokeLater
-                if (suggestedKit != null) kitRoot.text = suggestedKit.toString() else if (savedKit != null) kitRoot.text = savedKit
-                if (suggestedPython != null) python.text = suggestedPython
-                if (suggestedKit != null) bind() else status.text = "绑定受信任项目中的 Kit 后读取工作区。"
+            val suggestedPython = suggestedKit?.let { settings.preference(it.toString()).python } ?: "python3"
+            
+            if (suggestedKit != null && TrustedProjects.isProjectTrusted(project)) {
+                WorkbenchService.getInstance(project).bind(suggestedKit.toString(), suggestedPython) { state ->
+                    if (state.workspace != null && state.kitRoot != null) runCatching {
+                        settings.rememberBinding(projectRoot, state.kitRoot)
+                        settings.preference(state.kitRoot).python = state.python ?: suggestedPython
+                    }
+                }
             }
         }
-    }
-
-    private fun row(label: String, field: JComponent) = JPanel(BorderLayout(8, 0)).apply {
-        add(JBLabel(label), BorderLayout.WEST)
-        add(field, BorderLayout.CENTER)
     }
 
     companion object {
         internal fun suggestKitRoot(projectRoot: Path, savedKit: String?): Path? =
-            sequenceOf(savedKit?.let(Path::of), projectRoot, projectRoot.resolve("agent-workbench"))
+            sequenceOf(
+                savedKit?.let(Path::of),
+                projectRoot,
+                projectRoot.resolve("agent-workbench"),
+                projectRoot.parent?.resolve("agent-workbench"),
+                Path.of(System.getProperty("user.home"), "workspace/code/agent-workbench")
+            )
                 .filterNotNull()
                 .mapNotNull { runCatching { it.toRealPath() }.getOrNull() }
                 .firstOrNull { Files.isRegularFile(it.resolve("scripts/kit.py")) }

@@ -3,13 +3,20 @@ package org.agentworkbench.intellij.ui
 import com.google.gson.JsonObject
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
+import org.agentworkbench.intellij.WorkbenchNotifier
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.ui.OnePixelSplitter
+import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.*
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
@@ -27,10 +34,12 @@ import javax.swing.*
 import javax.swing.table.DefaultTableModel
 import org.agentworkbench.intellij.ui.WorkbenchUi as U
 
-internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
+internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout()), Disposable {
     private val service = WorkbenchService.getInstance(project)
     private val settings = WorkbenchSettings.getInstance()
     private val scanService = GitScanService.getInstance(project)
+    private val contentPanel = JPanel(BorderLayout())
+    private val emptyPanel = JPanel(GridBagLayout())
     private val sidebar = U.panel(BorderLayout())
     private val nav = U.column()
     private val workspaceName = U.label("研发工作区", 13, bold = true)
@@ -47,16 +56,57 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
     private val overviewMetrics = U.panel()
     private val ongoing = U.column()
     private val overviewAttention = U.column()
+    private val overviewDoctorBanner = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+        background = com.intellij.ui.JBColor(0xF9FAFB, 0x2B2D30)
+        border = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xE5E7EB, 0x3C3F41), 1),
+            JBUI.Borders.empty(8, 14)
+        )
+        isVisible = false
+    }
     private val featuresPage = U.column()
     private val featureCount = U.label("", 11, U.muted)
     private val featureModel = DefaultListModel<JsonObject>()
     private val featureList = JBList(featureModel)
-    private val search = JTextField()
+    private val search = SearchTextField()
     private val lifecycle = JComboBox(arrayOf("全部", "planning", "development", "testing", "paused", "done"))
     private val repoFilter = JComboBox(arrayOf("全部仓库"))
     private val sort = JComboBox(arrayOf("最近更新", "名称"))
     private val featureHeader = U.column()
     private val featureOverview = U.column()
+    private val featureDashboard = FeatureDashboardPanel(
+        project = project,
+        onOpenTask = { locateTask(it) },
+        onShowDiff = { _, _ -> tabs.selectedIndex = CHANGES },
+        onOpenDoc = { openDocument(it) }
+    )
+    private val featureDoctorStrip = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+        background = com.intellij.ui.JBColor(0xECFDF5, 0x16261E)
+        border = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xA7F3D0, 0x234A35), 1),
+            JBUI.Borders.empty(6, 12)
+        )
+        val checkIcon = JLabel(AllIcons.General.InspectionsOK)
+        val label = JLabel("工作区体检正常：所有代码仓配置完备 · 环境已通过检验 · 0 项错误").apply {
+            font = font.deriveFont(11.5f)
+            foreground = com.intellij.ui.JBColor(0x065F46, 0x34D399)
+        }
+        val leftBox = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(checkIcon)
+            add(label)
+        }
+        val viewDetailBtn = JButton("查看体检详情").apply {
+            font = font.deriveFont(11f)
+            foreground = com.intellij.ui.JBColor(0x2563EB, 0x60A5FA)
+            isBorderPainted = false
+            isContentAreaFilled = false
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addActionListener { navigate("diagnostics") }
+        }
+        add(leftBox, BorderLayout.CENTER)
+        add(viewDetailBtn, BorderLayout.EAST)
+    }
     private val tabs = WorkbenchTabs()
     private val planTitle = U.label("计划", 14, bold = true)
     private val taskTable = table("编号", "完成", "任务", "依赖", "原文位置")
@@ -109,23 +159,59 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
     init {
         getAccessibleContext().accessibleName = "Agent Workbench 工作台"
         background = U.bg
-        sidebar.background = U.surface; sidebar.preferredSize = Dimension(JBUI.scale(224), 1)
-        sidebar.border = BorderFactory.createMatteBorder(0, 0, 0, 1, U.border)
+        sidebar.background = U.surface
+        sidebar.minimumSize = Dimension(JBUI.scale(160), 1)
         val workspace = U.row(U.column(5, workspaceName, workspacePath), JBLabel(AllIcons.General.ChevronDown)).apply { background = U.surface; border = JBUI.Borders.empty(22, 18, 22, 14) }
         sidebar.add(workspace, BorderLayout.NORTH)
         sidebar.add(U.scroll(nav).apply { viewport.background = U.surface })
         sidebar.add(U.column(12, navButton("配置", "工作区配置", AllIcons.General.Settings) { navigate("configuration") }, U.line(), U.label("工作流当前需求", 10, U.faint), activeLabel).apply { border = JBUI.Borders.empty(12, 18); background = U.surface }, BorderLayout.SOUTH)
-        add(sidebar, BorderLayout.WEST)
-        val workarea = U.panel()
-        val editorBar = U.row(U.flow(U.button("工作区总览", true) { navigate("overview") }.apply { icon = AllIcons.Nodes.HomeFolder; iconTextGap = JBUI.scale(6) }, editorTitle)).apply {
+
+        val workarea = U.panel().apply {
+            minimumSize = Dimension(JBUI.scale(320), 1)
+        }
+        lateinit var mainSplitter: OnePixelSplitter
+        val toggleSidebarBtn = U.button("折叠侧栏", true) {
+            sidebar.isVisible = !sidebar.isVisible
+            mainSplitter.revalidate()
+            mainSplitter.repaint()
+        }.apply {
+            icon = AllIcons.General.InlineVariables
+            toolTipText = "显示/隐藏工作台左侧导航栏，获取全屏沉浸阅读空间"
+        }
+        val editorBar = U.row(
+            U.flow(
+                U.button("工作区总览", true) { navigate("overview") }.apply { icon = AllIcons.Nodes.HomeFolder; iconTextGap = JBUI.scale(6) },
+                editorTitle
+            ),
+            toggleSidebarBtn
+        ).apply {
             background = U.surface; border = BorderFactory.createCompoundBorder(BottomLine(U.border), JBUI.Borders.empty(7, 16)); preferredSize = Dimension(1, JBUI.scale(43))
         }
         workarea.add(U.column(0, editorBar, notice.apply { border = JBUI.Borders.empty(7,28); isVisible = false }, modeNotice.apply { border = JBUI.Borders.empty(7,28); isVisible = false }), BorderLayout.NORTH)
         workarea.add(pages)
-        add(workarea)
-        add(U.row(bottomStatus, bottomRead).apply { background = U.surface; border = JBUI.Borders.empty(6,12); preferredSize = Dimension(1,JBUI.scale(28)) }, BorderLayout.SOUTH)
+
+        mainSplitter = OnePixelSplitter(false, "org.agentworkbench.intellij.workbenchProportion", 0.22f).apply {
+            firstComponent = sidebar
+            secondComponent = workarea
+            setHonorComponentsMinimumSize(true)
+            dividerWidth = JBUI.scale(1)
+        }
+        contentPanel.add(mainSplitter, BorderLayout.CENTER)
+        contentPanel.add(U.row(bottomStatus, bottomRead).apply { background = U.surface; border = JBUI.Borders.empty(6,12); preferredSize = Dimension(1,JBUI.scale(28)) }, BorderLayout.SOUTH)
+
+        // ===== Empty Setup State UI =====
+        val emptyMessage = U.label("当前项目未检测到 Agent Workbench 配置", 14, U.muted)
+        val setupButton = U.button("配置 Kit 工作流根目录", true) {
+            com.intellij.openapi.options.ShowSettingsUtil.getInstance().showSettingsDialog(project, WorkbenchConfigurable::class.java)
+        }.apply { icon = AllIcons.General.Settings }
+        emptyPanel.background = U.bg
+        emptyPanel.add(U.column(16, emptyMessage, setupButton))
+        
+        add(emptyPanel, "EMPTY")
+        add(contentPanel, "CONTENT")
 
         U.append(overviewBody, U.column(10,U.row(U.label("工作区总览",23,bold=true),U.flow(U.button("刷新", action=::reload).apply { icon = AllIcons.Actions.Refresh },U.button("Fetch 全部") { git.fetchVisible() }.apply { icon = AllIcons.Actions.Download })),overviewPath))
+        U.append(overviewBody, overviewDoctorBanner, 16)
         U.append(overviewBody, overviewMetrics, 26)
         git.preferredSize = Dimension(1, JBUI.scale(405))
         U.append(overviewBody, git, 20)
@@ -135,8 +221,10 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
         U.append(featuresPage, pageHeader("Feature 工作台", "浏览全部需求与历史记录"))
         lifecycle.renderer = object : DefaultListCellRenderer() { override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, selected: Boolean, focus: Boolean): Component = super.getListCellRendererComponent(list, if(value == "全部") value else U.status(value?.toString()), index, selected, focus) }
         val tools = U.row(search, U.flow(lifecycle, repoFilter, sort)).apply { border = JBUI.Borders.empty(24,0,16,0) }
-        search.preferredSize = Dimension(220,32); search.toolTipText = "搜索需求名称或标识"; search.accessibleContext.accessibleName = "搜索需求"
-        U.input(search);listOf(lifecycle,repoFilter,sort,taskFilter,filePicker,runPicker).forEach(U::combo)
+        search.textEditor.emptyText.text = "搜索需求名称或标识..."
+        search.textEditor.accessibleContext.accessibleName = "搜索需求"
+        search.preferredSize = Dimension(JBUI.scale(220), JBUI.scale(32))
+        listOf(lifecycle,repoFilter,sort,taskFilter,filePicker,runPicker).forEach(U::combo)
         U.append(featuresPage, tools); U.append(featuresPage, featureCount)
         featureList.background = U.bg
         featureList.selectionBackground = U.selection
@@ -150,24 +238,72 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
             }
         }
         com.intellij.ui.ListSpeedSearch.installOn(featureList) { it.str("title") ?: it.str("slug").orEmpty() }
+        com.intellij.ui.TableSpeedSearch.installOn(taskTable)
         featureList.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent) { if (e.clickCount == 2) openSelectedFeature() }
         })
         featureList.registerKeyboardAction({ openSelectedFeature() }, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER, 0), JComponent.WHEN_FOCUSED)
+        featureList.registerKeyboardAction({
+            featureList.selectedValue?.let { f ->
+                val slug = f.str("slug") ?: return@let
+                WorkbenchNavigation.openFeatureInEditor(project, slug)
+            }
+        }, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F4, 0), JComponent.WHEN_FOCUSED)
+        featureList.addMouseListener(object : com.intellij.ui.PopupHandler() {
+            override fun invokePopup(comp: Component, x: Int, y: Int) {
+                val index = featureList.locationToIndex(Point(x, y))
+                if (index >= 0) {
+                    featureList.selectedIndex = index
+                    val item = featureList.selectedValue ?: return
+                    val slug = item.str("slug") ?: return
+                    val menu = JPopupMenu()
+                    menu.add(JMenuItem("打开需求面板").apply { addActionListener { openSelectedFeature() } })
+                    menu.add(JMenuItem("在编辑器中打开 (F4)").apply {
+                        icon = AllIcons.General.OpenInToolWindow
+                        addActionListener { WorkbenchNavigation.openFeatureInEditor(project, slug) }
+                    })
+                    menu.add(JMenuItem("在项目视图中定位").apply {
+                        icon = AllIcons.General.Locate
+                        addActionListener { WorkbenchNavigation.locateFeatureInProjectView(project, slug) }
+                    })
+                    menu.addSeparator()
+                    menu.add(JMenuItem("复制需求 Slug ($slug)").apply {
+                        addActionListener { com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(java.awt.datatransfer.StringSelection(slug)) }
+                    })
+                    menu.show(comp, x, y)
+                }
+            }
+        })
         U.append(featuresPage, featureList, 16)
         pages.add(U.page(U.padded(featuresPage) as JPanel), "features")
 
-        tabs.addTab("概览", U.page(featureOverview))
+        tabs.addTab("总览与说明", featureDashboard)
         filePicker.preferredSize = Dimension(JBUI.scale(320), JBUI.scale(30))
-        tabs.addTab("文档", U.panel().apply { add(U.row(U.flow(filePicker), documentStatus).apply { border = JBUI.Borders.empty(16,0) }, BorderLayout.NORTH); add(reader) })
-        tabs.addTab("计划", U.panel().apply {
-            add(U.row(planTitle, U.flow(taskFilter, U.button("定位所选任务原文", action = ::locateTask))).apply { border = JBUI.Borders.empty(24,0,16,0) }, BorderLayout.NORTH)
+        val openInEditorBtn = U.button("在编辑器中打开", true) {
+            val slug = selectedSlug ?: return@button
+            val doc = selectedDocument ?: "README.md"
+            WorkbenchNavigation.openFeatureInEditor(project, slug, doc)
+        }.apply { icon = AllIcons.General.OpenInToolWindow; toolTipText = "在 IDEA 主编辑器 Tab 中打开此文档，支持原生预览与快捷键" }
+        val locateTaskBtn = U.button("定位所选任务原文", action = ::locateTask).apply { toolTipText = "在内置阅读器中查看任务定义" }
+        val openTaskInEditorBtn = U.button("在编辑器中打开任务", true) {
+            val task = taskSelected() ?: return@button
+            locateTaskInEditor(task)
+        }.apply { icon = AllIcons.General.OpenInToolWindow; toolTipText = "在主编辑器中打开 implementation.md 并跳转到该任务定义行" }
+        val docPanel = U.panel().apply { add(U.row(U.flow(filePicker, openInEditorBtn), documentStatus).apply { border = JBUI.Borders.empty(16,0) }, BorderLayout.NORTH); add(reader) }
+        val planPanel = U.panel().apply {
+            add(U.row(planTitle, U.flow(taskFilter, locateTaskBtn, openTaskInEditorBtn)).apply { border = JBUI.Borders.empty(24,0,16,0) }, BorderLayout.NORTH)
             add(U.scroll(taskTable))
-        })
-        tabs.addTab("变更", WorkbenchTabs().apply { addTab("需求分支已提交", committedChanges); addTab("当前工作目录", workingGit) })
-        tabs.addTab("验证", U.page(verificationBody))
+        }
+        val changesPanel = WorkbenchTabs().apply { addTab("需求分支已提交", committedChanges); addTab("当前工作目录", workingGit) }
+
+        tabs.addTab("PRD 规范文档", docPanel)
+        tabs.addTab("任务拆解与执行", planPanel)
+        tabs.addTab("代码变更与比对", changesPanel)
+        tabs.addTab("验证与测试", U.page(verificationBody))
         tabs.addTab("流程", U.panel().apply { add(U.row(U.flow(U.label("运行记录",11,U.muted), runPicker), runStatus).apply { border = JBUI.Borders.empty(22,0,20,0) }, BorderLayout.NORTH); add(U.page(workflowBody)) })
-        pages.add(U.padded(U.panel().apply { add(featureHeader, BorderLayout.NORTH); add(tabs) }), "feature")
+
+        val featureNorth = U.column(8, featureHeader, featureDoctorStrip)
+        pages.add(U.padded(U.panel().apply { add(featureNorth, BorderLayout.NORTH); add(tabs) }), "feature")
         pages.add(U.page(U.padded(globalRuns) as JPanel), "runs")
         pages.add(U.page(U.padded(globalExtensions) as JPanel), "extensions")
         pages.add(U.padded(U.panel().apply { add(pageHeader("业务仓库", "查看现场 · 使用宿主 Git 操作", U.button("刷新") { reload() }.apply { icon = AllIcons.Actions.Refresh }), BorderLayout.NORTH); add(repositoryGit) }), "repositories")
@@ -180,10 +316,37 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
         U.append(diagnosticsPage, doctorBody, 4)
         pages.add(U.page(U.padded(diagnosticsPage) as JPanel), "diagnostics")
         tabs.onChange = { if (!changing) { remember(); loadVisible() } }
-        search.document.addDocumentListener(onText { filterFeatures(); remember() })
+        search.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
+            override fun textChanged(e: javax.swing.event.DocumentEvent) { filterFeatures(); remember() }
+        })
         lifecycle.addActionListener { filterFeatures(); remember() }; repoFilter.addActionListener { filterFeatures() }; sort.addActionListener { filterFeatures() }
         taskFilter.addActionListener { renderTasks() }
         taskTable.addMouseListener(object : java.awt.event.MouseAdapter() { override fun mouseClicked(e: java.awt.event.MouseEvent) { if(e.clickCount == 2) locateTask() } })
+        taskTable.registerKeyboardAction({ locateTask() }, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER, 0), JComponent.WHEN_FOCUSED)
+        taskTable.registerKeyboardAction({
+            taskSelected()?.let(::locateTaskInEditor)
+        }, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F4, 0), JComponent.WHEN_FOCUSED)
+        taskTable.addMouseListener(object : com.intellij.ui.PopupHandler() {
+            override fun invokePopup(comp: Component, x: Int, y: Int) {
+                val row = taskTable.rowAtPoint(Point(x, y))
+                if (row >= 0) {
+                    taskTable.setRowSelectionInterval(row, row)
+                    val task = taskSelected() ?: return
+                    val menu = JPopupMenu()
+                    menu.add(JMenuItem("在内置阅读器中定位").apply { addActionListener { locateTask(task) } })
+                    menu.add(JMenuItem("在编辑器中打开 (F4)").apply {
+                        icon = AllIcons.General.OpenInToolWindow
+                        addActionListener { locateTaskInEditor(task) }
+                    })
+                    menu.addSeparator()
+                    val taskId = task.str("id") ?: task.str("title").orEmpty()
+                    menu.add(JMenuItem("复制任务标识 ($taskId)").apply {
+                        addActionListener { com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(java.awt.datatransfer.StringSelection(taskId)) }
+                    })
+                    menu.show(comp, x, y)
+                }
+            }
+        })
         filePicker.addActionListener { if (!changing) filePicker.selectedItem?.toString()?.let { openDocument(it) } }
         runPicker.addActionListener { if (!changing) { loadRun(); remember() } }
         reader.onPosition = { line -> state.kitRoot?.let { root -> selectedDocument?.let { path -> documentRevision?.let { revision -> settings.rememberPosition(root, "$selectedSlug:$path:$revision", line) } } } }
@@ -194,7 +357,18 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
             renderWorkspaceSummary(); renderSidebar()
             if (!scanning) detailData?.let(::renderFeatureOverview)
         }
-        service.subscribe(this) { if (active) refresh() else snapshotDirty = true }
+        service.subscribe(this) {
+            val next = service.snapshot()
+            if (active) {
+                refresh()
+            } else {
+                snapshotDirty = true
+                // 如果当前未激活但检测到了有效的 kitRoot，且界面还在 EMPTY 状态，立即拉起 refresh 切换界面
+                if (!next.kitRoot.isNullOrBlank() && state.kitRoot.isNullOrBlank()) {
+                    refresh()
+                }
+            }
+        }
         project.messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
                 val roots = repositories().mapNotNull { it.str("absolutePath") }
@@ -225,6 +399,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
     fun refresh() {
         if(disposed) return
         val next = service.snapshot(); val changedRoot = state.kitRoot != next.kitRoot; state = next
+        (layout as? CardLayout)?.show(this, if (state.kitRoot.isNullOrBlank()) "EMPTY" else "CONTENT")
         if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; describeLoaded=false; describeSummaries=emptyMap(); pendingKit.clear(); restore() }
         overviewPath.text=state.kitRoot ?: "在侧栏入口绑定工作流 Kit"
         workspaceName.text = state.workspace?.data.obj()?.get("identity").obj()?.str("name") ?: "研发工作区"
@@ -244,6 +419,9 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
             changing=true; val selected=repoFilter.selectedItem; repoFilter.removeAllItems(); repoFilter.addItem("全部仓库"); repositories().forEach { repoFilter.addItem(it.str("id")) }; repoFilter.selectedItem=selected ?: "全部仓库"; changing=false
         }
         renderSidebar(); renderWorkspaceSummary(); filterFeatures(); renderConfiguration()
+        if (state.kitRoot != null && !doctorRan && !runningDoctor) {
+            runDoctor()
+        }
     }
     fun isGitSnapshotReady() = scenes.size == repositories().size && scenes.isNotEmpty()
     private fun repositories() = state.workspace?.data.obj()?.objects("repositories").orEmpty()
@@ -319,55 +497,176 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
             service.loadVerification(slug) { evidence -> if(!disposed&&selectedSlug==slug&&evidence.error==null) { verificationData=evidence.verification?.data.obj();renderFeatureOverview(data);renderVerification() } }
         }
     }
-    private fun showFeature(data:JsonObject) {
-        detailData=data; val summary=data.get("summary").obj()?:return
-        val related=summary.objects("repositoryBindings").mapNotNull { it.str("repository") }.toSet()
-        git.setRelated(related);workingGit.setRelated(related);workingGit.filter("related");repositoryGit.setRelated(related)
+    private fun showFeature(data: JsonObject) {
+        detailData = data; val summary = data.get("summary").obj() ?: return
+        val related = summary.objects("repositoryBindings").mapNotNull { it.str("repository") }.toSet()
+        git.setRelated(related); workingGit.setRelated(related); workingGit.filter("related"); repositoryGit.setRelated(related)
+        
         featureHeader.removeAll()
-        U.append(featureHeader,U.row(U.flow(U.button("Feature",true) { navigate("features") },U.label("›",12,U.faint),U.mono(summary.str("slug").orEmpty())),U.button("刷新",action=::reload).apply { icon = AllIcons.Actions.Refresh }))
-        U.append(featureHeader,U.row(U.flow(U.label(summary.str("title").orEmpty(),18,bold=true),U.badge(U.status(summary.str("status")))),if(activeLabel.text==selectedSlug) U.badge("◉ 工作流当前需求") else null),8)
-        U.append(featureHeader,U.label("${summary.objects("repositoryBindings").size} 个关联仓库  ·  记录日期 ${summary.str("lastUpdated")}",11,U.muted),6)
-        featureHeader.border=JBUI.Borders.empty(0,0,10,0)
-        tasks=data.objects("tasks");files=documentFiles(data)
-        tabs.setTitleAt(PLAN,"计划 ${tasks.count { it.get("completed")?.asBoolean==true }}/${tasks.size}")
-        renderTasks();renderFeatureOverview(data);renderVerification()
-        committedChanges.showFeature(data,repositories())
-        changing=true;filePicker.removeAllItems();files.filter { it.get("exists")?.asBoolean==true }.forEach { filePicker.addItem(it.str("path")) };selectedDocument?.let { filePicker.selectedItem=it };changing=false
-        featureHeader.revalidate();featureHeader.repaint();editorTitle.text=summary.str("title");loadVisible()
-    }
-    private fun renderFeatureOverview(data:JsonObject) {
-        featureOverview.removeAll();featureOverview.border=JBUI.Borders.empty(26,0,20,0)
-        val summary=data.get("summary").obj()?:return;val progression=data.get("progression").obj(); val batch=verificationData?.get("selectedBatch").obj()
-        U.append(featureOverview,U.metrics(U.metric("阶段建议",U.stage(progression?.str("currentStage"))),U.metric("计划进度","${tasks.count { it.get("completed")?.asBoolean==true }} / ${tasks.size} 项"),U.metric("最近验证",U.state(batch?.str("recordedResult")),U.state(verificationData?.str("applicability")),U.stateColor(batch?.str("recordedResult")))))
-        val main=U.column();val aside=U.column()
-        U.append(main,U.section("需求范围",U.button("阅读需求  ↗",true) { showDocument("requirements/requirements.md") }))
-        U.append(main,U.copy(data.get("description").obj()?.str("content")?:"当前记录没有需求摘要。可打开需求文档查看原文。"))
-        U.append(main,U.section("关联仓库  ${summary.objects("repositoryBindings").size}",U.button("审查需求变更  →",true) { tabs.selectedIndex=CHANGES }),24)
-        summary.objects("repositoryBindings").forEach { binding ->
-            val name=binding.str("repository").orEmpty();val scene=scenes[name] as? NativeGit.Snapshot.Available;val current=scene?.branch
-            val matching=current!=null && current==binding.str("workBranch")
-            val card=U.column(18,U.row(U.flow(U.label("⬡",18,U.muted),U.label(name,13,bold=true)),U.badge(if(current==null) "现场待读取" else if(matching) "已检出需求分支" else "当前未检出需求分支",if(matching) U.green else U.amber)),U.panel(GridLayout(1,3,14,0)).apply {
-                for((caption,value) in listOf("需求分支" to binding.str("workBranch"),"实际检出" to current,"需求记录基线" to binding.str("baseBranch"))) add(U.column(7,U.label(caption,10,U.faint),U.mono("⑂ ${value?:"未记录"}",U.purple)))
-            }).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(14,0,20,0));this.name="repository-binding-$name" }
-            U.append(main,card)
+        val slug = summary.str("slug").orEmpty()
+        val title = summary.str("title").orEmpty()
+        val status = summary.str("status") ?: "development"
+        val progression = data.get("progression").obj()
+        val currentStage = progression?.str("currentStage") ?: "feature.implement"
+        tasks = data.objects("tasks")
+        files = documentFiles(data)
+        val completedCount = tasks.count { it.get("completed")?.asBoolean == true }
+        val totalCount = tasks.size
+        val pct = if (totalCount > 0) (completedCount * 100 / totalCount) else 0
+
+        // Line 1: Breadcrumb + Copy Prompt Button
+        val breadcrumb = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            val fBtn = JButton("Feature").apply {
+                isBorderPainted = false
+                isContentAreaFilled = false
+                font = font.deriveFont(11.5f)
+                foreground = U.muted
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                addActionListener { navigate("features") }
+            }
+            val arrow = JLabel("›").apply {
+                font = font.deriveFont(11.5f)
+                foreground = U.faint
+            }
+            val slugLabel = JLabel(slug).apply {
+                font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
+                foreground = U.muted
+            }
+            add(fBtn)
+            add(arrow)
+            add(slugLabel)
         }
-        val pending=tasks.filter { it.get("completed")?.asBoolean!=true }
-        U.append(main,U.section("待完成任务  ${pending.size}",U.button("完整计划  →",true) { tabs.selectedIndex=PLAN }),28)
-        pending.take(4).forEach { task ->
-            val left=U.column(6,U.label("○   ${task.str("title")}",12),U.mono(task.str("id")?:"未编号"))
-            U.append(main,U.row(left,U.button("定位原文") { locateTask(task) }).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(12,0)) })
+
+        val rightActions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            val openDocBtn = U.button("查看文档 (F4)", true) {
+                WorkbenchNavigation.openFeatureInEditor(project, slug)
+            }.apply {
+                icon = AllIcons.Actions.Preview
+            }
+            val locateBtn = U.button("在工程中定位", true) {
+                WorkbenchNavigation.locateFeatureInProjectView(project, slug)
+            }.apply {
+                icon = AllIcons.General.Locate
+            }
+            val refreshBtn = U.button("刷新") { reload() }.apply {
+                icon = AllIcons.Actions.Refresh
+            }
+            add(openDocBtn)
+            add(locateBtn)
+            add(refreshBtn)
         }
-        if(pending.isEmpty()) U.append(main,U.label("✓ 计划中的任务已全部完成",12,U.green))
-        val concerns=progression?.objects("nextActions").orEmpty().mapNotNull { it.str("reason")?.replace("需求 ${selectedSlug} 的","该需求的")?.replace("development","开发中") } + summary.objects("repositoryBindings").mapNotNull { binding -> (scenes[binding.str("repository")] as? NativeGit.Snapshot.Available)?.takeIf { it.branch!=binding.str("workBranch") }?.let { "${binding.str("repository")} 当前检出 ${it.branch}，与需求分支不同。" } }
-        renderAttention(aside,concerns)
-        U.append(aside,U.button("查看验证依据  →",true) { tabs.selectedIndex=VERIFY },10)
-        U.append(aside,U.section("文档与交付物"),26)
-        listOf("需求标识" to summary.str("slug"),"记录日期" to summary.str("lastUpdated"),"文档" to "${data.objects("files").count { it.get("exists")?.asBoolean==true }} 份已有记录","交付物" to "${data.objects("artifacts").size} 个文件").forEach { (key,value) -> U.append(aside,U.column(6,U.label(key,10,U.faint),U.label(value.orEmpty(),11)),10) }
-        U.append(aside,U.section("审阅记录"),24)
-        summary.get("documentReviews").obj()?.entrySet()?.forEach { (key,value) -> U.append(aside,U.row(U.label(when(key){"requirements"->"需求";"design"->"设计";else->"计划"},11,U.muted),U.label(value.text(),11,if(KitSemantics.reviewPending(value.text())) U.amber else U.green)),10) }
-        U.append(featureOverview,twoColumns(main,aside,250),28)
-        featureOverview.revalidate();featureOverview.repaint()
+
+        val line1 = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(breadcrumb, BorderLayout.WEST)
+            add(rightActions, BorderLayout.EAST)
+        }
+
+        // Line 2: Big bold title
+        val titleLabel = JLabel(title).apply {
+            font = font.deriveFont(Font.BOLD, 20f)
+            foreground = U.text
+        }
+        val line2 = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 0, 8, 0)
+            add(titleLabel, BorderLayout.CENTER)
+        }
+
+        // Line 3: Status capsules
+        val leftCapsules = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            val statusPill = JLabel("⬡ $status").apply {
+                font = font.deriveFont(Font.BOLD, 11f)
+                foreground = com.intellij.ui.JBColor(0x2563EB, 0x60A5FA)
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(com.intellij.ui.JBColor(0x93C5FD, 0x1E3A8A), 1),
+                    JBUI.Borders.empty(3, 8)
+                )
+            }
+            val stagePill = JLabel("⑂ $currentStage").apply {
+                font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
+                foreground = U.muted
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xE5E7EB, 0x374151), 1),
+                    JBUI.Borders.empty(3, 8)
+                )
+            }
+            val progressPill = JLabel("$completedCount/$totalCount 已完成 ($pct%)").apply {
+                font = font.deriveFont(11f)
+                foreground = U.muted
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xE5E7EB, 0x374151), 1),
+                    JBUI.Borders.empty(3, 8)
+                )
+            }
+            add(statusPill)
+            add(stagePill)
+            add(progressPill)
+        }
+
+        val line3 = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(leftCapsules, BorderLayout.WEST)
+        }
+
+        featureHeader.add(line1)
+        featureHeader.add(line2)
+        featureHeader.add(line3)
+        featureHeader.border = JBUI.Borders.empty(0, 0, 8, 0)
+
+        tabs.setTitleAt(PLAN, "任务拆解与执行 ${completedCount}/${totalCount}")
+        renderTasks(); renderFeatureOverview(data); renderVerification()
+        committedChanges.showFeature(data, repositories())
+        changing = true; filePicker.removeAllItems(); files.filter { it.get("exists")?.asBoolean == true }.forEach { filePicker.addItem(it.str("path")) }; selectedDocument?.let { filePicker.selectedItem = it }; changing = false
+        featureHeader.revalidate(); featureHeader.repaint(); editorTitle.text = title; loadVisible()
     }
+
+    private fun renderFeatureOverview(data: JsonObject) {
+        val summary = data.get("summary").obj() ?: return
+        val slug = summary.str("slug").orEmpty()
+        val fDir = summary.str("path").orEmpty()
+        val root = state.kitRoot
+        val repoRoots = repositories().associate { it.str("name").orEmpty() to Path.of(it.str("root").orEmpty()) }
+
+        val reqFileMeta = files.firstOrNull { f ->
+            val p = f.str("path")?.lowercase() ?: ""
+            p.endsWith("requirements.md") || p == "requirements.md" || p.contains("requirements")
+        }
+        val reqPath = reqFileMeta?.str("path") ?: "requirements/requirements.md"
+
+        val localContent = if (!root.isNullOrBlank() && fDir.isNotBlank()) {
+            val candidate1 = Path.of(root, fDir, reqPath)
+            val candidate2 = Path.of(root, fDir, "requirements.md")
+            val candidate3 = Path.of(root, fDir, "requirements", "requirements.md")
+            val candidate4 = Path.of(root, fDir, "README.md")
+            sequenceOf(candidate1, candidate2, candidate3, candidate4)
+                .firstOrNull { java.nio.file.Files.exists(it) }
+                ?.let { runCatching { java.nio.file.Files.readString(it) }.getOrNull() }
+        } else null
+
+        featureDashboard.update(
+            featureData = data,
+            tasks = tasks,
+            repositoryBindings = summary.objects("repositoryBindings"),
+            repoRoots = repoRoots,
+            requirementsContent = localContent,
+            requirementsPath = reqPath,
+            scenes = scenes,
+            onNavigateTab = { tabIndex -> tabs.selectedIndex = tabIndex }
+        )
+
+        service.loadDocument(slug, reqPath, reqFileMeta?.str("revision")) { docSnapshot ->
+            if (disposed || selectedSlug != slug) return@loadDocument
+            val remoteContent = docSnapshot.document?.data.obj()?.str("content")
+            if (!remoteContent.isNullOrBlank()) {
+                featureDashboard.setRequirementsContent(reqPath, remoteContent)
+            }
+        }
+    }
+
     private fun renderTasks() {
         displayedTasks=tasks.filter { taskFilter.selectedIndex==0 || (it.get("completed")?.asBoolean==true)==(taskFilter.selectedIndex==2) }
         planTitle.text="实施计划 · ${tasks.count { it.get("completed")?.asBoolean==true }}/${tasks.size} 项完成"
@@ -412,7 +711,14 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
         }
     }
 
+    private fun taskSelected(): JsonObject? = displayedTasks.getOrNull(taskTable.selectedRow)
     private fun locateTask() { displayedTasks.getOrNull(taskTable.selectedRow)?.let(::locateTask) }
+    private fun locateTaskInEditor(task: JsonObject) {
+        val slug = selectedSlug ?: return
+        val path = task.str("path") ?: "plans/implementation.md"
+        val line = task.str("startLine")?.toIntOrNull()
+        WorkbenchNavigation.openFeatureInEditor(project, slug, path, line)
+    }
 
     private fun openLink(target: String) {
         val uri = runCatching { URI(target) }.getOrNull() ?: return
@@ -521,7 +827,13 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
             val label=if(stage.get("core")?.asBoolean==true) U.stage(id) else actionTitle ?: stage.str("title")?.takeIf { it!=id } ?: id.orEmpty()
             val heading=U.row(U.column(8,U.label(label,13,if(current) U.accent else U.text,true),U.mono(id.orEmpty(),U.faint)),U.flow(*listOfNotNull(if(current) U.badge("阶段建议") else null,record?.let { U.badge(U.state(it.str("status")),U.stateColor(it.str("status"))) },record?.get("configurationMatch").obj()?.let { U.badge("配置${U.state(it.str("state"))}",U.stateColor(it.str("state"))) }).toTypedArray()))
             val inside=if(record==null) heading else disclosure(heading,U.column(10,U.copy(record.str("summary").orEmpty()),U.mono("更新时间：${record.str("updatedAt")}"),U.label("配置匹配不代表业务代码有效",11,U.muted)))
-            U.append(workflowBody,U.panel(BorderLayout(12,0)).apply { add(TimelineMarker(current,stage.get("core")?.asBoolean!=true),BorderLayout.WEST);add(inside);border=JBUI.Borders.empty(18,3,8,0) })
+            val marker = TimelineMarker(
+                current = current,
+                extension = stage.get("core")?.asBoolean != true,
+                stageTitle = label,
+                stageState = record?.str("status")?.let { U.state(it) }
+            )
+            U.append(workflowBody,U.panel(BorderLayout(12,0)).apply { add(marker,BorderLayout.WEST);add(inside);border=JBUI.Borders.empty(18,3,8,0) })
         }
         val currentIds=data.objects("orderedStages").mapNotNull { it.str("id") }.toSet()
         records.filterKeys { it !in currentIds }.values.forEach { record -> U.append(workflowBody,U.column(8,U.badge("已删除的历史步骤",U.amber),U.label(record.str("stage").orEmpty()),U.copy(record.str("summary").orEmpty())),16) }
@@ -643,14 +955,52 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
     }
     private fun renderDoctor(result: Result<String>) {
         doctorBody.removeAll()
+        overviewDoctorBanner.removeAll()
         result.fold({ text ->
             val parsed = runCatching { com.google.gson.JsonParser.parseString(text).asJsonObject }.getOrNull()
-            if (parsed == null) U.append(doctorBody, U.copy("doctor 输出不可解析，请在终端直接运行 kit doctor 查看。"))
-            else {
+            if (parsed == null) {
+                U.append(doctorBody, U.copy("doctor 输出不可解析，请在终端直接运行 kit doctor 查看。"))
+                overviewDoctorBanner.isVisible = false
+            } else {
                 val summary = parsed.get("summary").obj()
-                U.append(doctorBody, U.label("错误 ${summary?.str("errors") ?: "0"} · 警告 ${summary?.str("warnings") ?: "0"} · 提示 ${summary?.str("info") ?: "0"}", 12, U.muted))
+                val errors = summary?.str("errors")?.toIntOrNull() ?: 0
+                val warnings = summary?.str("warnings")?.toIntOrNull() ?: 0
+                val info = summary?.str("info")?.toIntOrNull() ?: 0
+                U.append(doctorBody, U.label("错误 $errors · 警告 $warnings · 提示 $info", 12, U.muted))
                 val findings = parsed.objects("findings")
-                if (findings.isEmpty()) U.append(doctorBody, U.label("✓ 未发现问题", 12, U.green), 12)
+                if (findings.isEmpty()) {
+                    U.append(doctorBody, U.label("✓ 未发现问题", 12, U.green), 12)
+                    overviewDoctorBanner.apply {
+                        background = com.intellij.ui.JBColor(0xEEF8F1, 0x1C2B21)
+                        border = BorderFactory.createCompoundBorder(
+                            BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xC2E7CD, 0x2A4533), 1),
+                            JBUI.Borders.empty(8, 14)
+                        )
+                        add(javax.swing.JLabel("工作区环境健康（0 错误 · 0 警告）", AllIcons.General.InspectionsOK, javax.swing.JLabel.LEFT), BorderLayout.WEST)
+                        add(U.button("查看详情", true) { navigate("diagnostics") }.apply {
+                            font = font.deriveFont(11f)
+                        }, BorderLayout.EAST)
+                        isVisible = true
+                    }
+                } else {
+                    val hasError = errors > 0
+                    val bannerIcon = if (hasError) AllIcons.General.Error else AllIcons.General.Warning
+                    val bannerBg = if (hasError) com.intellij.ui.JBColor(0xFDF2F2, 0x362224) else com.intellij.ui.JBColor(0xFFFBEB, 0x382F19)
+                    val bannerBorderColor = if (hasError) com.intellij.ui.JBColor(0xF8B4B4, 0x5C2B2F) else com.intellij.ui.JBColor(0xFCE96A, 0x614F18)
+                    val bannerText = if (hasError) "工作区存在 $errors 项异常问题需处理" else "工作区存在 $warnings 项警告建议优化"
+                    overviewDoctorBanner.apply {
+                        background = bannerBg
+                        border = BorderFactory.createCompoundBorder(
+                            BorderFactory.createLineBorder(bannerBorderColor, 1),
+                            JBUI.Borders.empty(8, 14)
+                        )
+                        add(javax.swing.JLabel(bannerText, bannerIcon, javax.swing.JLabel.LEFT), BorderLayout.WEST)
+                        add(U.button("立即排查 →", true) { navigate("diagnostics") }.apply {
+                            font = font.deriveFont(11f)
+                        }, BorderLayout.EAST)
+                        isVisible = true
+                    }
+                }
                 findings.forEach { finding ->
                     val level = finding.str("level")?.uppercase() ?: "INFO"
                     val color = when (level) { "ERROR" -> U.red; "WARNING", "WARN" -> U.amber; else -> U.muted }
@@ -659,9 +1009,14 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
                     U.append(doctorBody, block.apply { border = BorderFactory.createCompoundBorder(BottomLine(U.border), JBUI.Borders.empty(12, 0)) }, 8)
                 }
             }
-        }, { failure -> U.append(doctorBody, U.copy("doctor 运行失败：${failure.message}")) })
+        }, { failure ->
+            U.append(doctorBody, U.copy("doctor 运行失败：${failure.message}"))
+            overviewDoctorBanner.isVisible = false
+        })
         doctorBody.revalidate(); doctorBody.repaint()
+        overviewDoctorBanner.revalidate(); overviewDoctorBanner.repaint()
     }
+
     private fun runDescribe() {
         if (describeLoaded) return
         val root = state.kitRoot ?: return
@@ -727,8 +1082,42 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(BorderLayou
         add(mainWrap);add(sideWrap)
     }
     private fun table(vararg columns:String) = JBTable(object:DefaultTableModel(columns,0){override fun isCellEditable(row:Int,column:Int)=false}).apply { setSelectionMode(ListSelectionModel.SINGLE_SELECTION);U.table(this);emptyText.text="暂无内容" }
-    private fun setRows(table:JTable,rows:List<List<Any?>>) { val model=table.model as DefaultTableModel;model.rowCount=0;rows.forEach { model.addRow(it.toTypedArray()) } }
+    private fun setRows(table: JTable, rows: List<List<Any?>>) { 
+        val model = table.model as DefaultTableModel 
+        val currentSelectedRow = table.selectedRow 
+        val existingRowCount = model.rowCount 
+        val newRowCount = rows.size 
+        
+        for (i in 0 until maxOf(existingRowCount, newRowCount)) { 
+            if (i < newRowCount && i < existingRowCount) { 
+                val row = rows[i] 
+                var rowChanged = false 
+                for (j in row.indices) { 
+                    if (model.getValueAt(i, j) != row[j]) { 
+                        model.setValueAt(row[j], i, j) 
+                        rowChanged = true 
+                    } 
+                } 
+            } else if (i < newRowCount) { 
+                model.addRow(rows[i].toTypedArray()) 
+            } else { 
+                model.removeRow(newRowCount) 
+            } 
+        } 
+        if (currentSelectedRow != -1 && currentSelectedRow < model.rowCount) { 
+            table.setRowSelectionInterval(currentSelectedRow, currentSelectedRow) 
+        } 
+    }
+
+    
     private fun documentFiles(data:JsonObject) = (data.objects("files")+data.objects("artifacts").map { it.deepCopy().apply { addProperty("exists",true) } }).distinctBy { it.str("path") }
     private fun onText(action:()->Unit)=object:javax.swing.event.DocumentListener{override fun insertUpdate(e:javax.swing.event.DocumentEvent)=action();override fun removeUpdate(e:javax.swing.event.DocumentEvent)=action();override fun changedUpdate(e:javax.swing.event.DocumentEvent)=action()}
-    companion object { const val SUMMARY=0;const val DOCUMENTS=1;const val PLAN=2;const val CHANGES=3;const val VERIFY=4;const val WORKFLOW=5 }
+    companion object {
+        const val SUMMARY = 0
+        const val DOCUMENTS = 1
+        const val PLAN = 2
+        const val CHANGES = 3
+        const val VERIFY = 4
+        const val WORKFLOW = 5
+    }
 }

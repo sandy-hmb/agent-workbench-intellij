@@ -7,6 +7,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.project.Project
+import com.intellij.ui.JBSplitter
 import com.intellij.ui.ListSpeedSearch
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -25,7 +26,6 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JEditorPane
 import javax.swing.JPanel
-import javax.swing.JSplitPane
 import javax.swing.JToggleButton
 import javax.swing.KeyStroke
 import javax.swing.event.HyperlinkEvent
@@ -41,8 +41,16 @@ internal class DocumentReader(private val project: Project, private val link: (S
     private val anchors = mutableMapOf<String, Int>()
     private val readToggle = JToggleButton("阅读", AllIcons.General.LayoutPreviewOnly, true)
     private val sourceToggle = JToggleButton("原文", AllIcons.General.LayoutEditorOnly)
+    private val outlineToggle = JToggleButton("大纲", AllIcons.Actions.ListFiles, true).apply {
+        toolTipText = "显示/隐藏文档大纲导航栏"
+    }
     private var disposed = false
     var onPosition: ((Int) -> Unit)? = null
+    var onOpenInEditor: (() -> Unit)? = null
+    private val openInEditorBtn = WorkbenchUi.button("在编辑器中打开 (F4)", action = { onOpenInEditor?.invoke() }).apply {
+        icon = AllIcons.General.OpenInToolWindow
+        toolTipText = "在主编辑器 Tab 中打开真实文件（支持双栏并排、编辑与 Markdown 插件渲染）"
+    }
 
     init {
         getAccessibleContext().accessibleName = "需求文档阅读器"
@@ -59,11 +67,32 @@ internal class DocumentReader(private val project: Project, private val link: (S
         sourceToggle.addActionListener { showMode("source") }
         readToggle.toolTipText = "渲染视图"
         sourceToggle.toolTipText = "原文视图（支持行定位与查找）"
-        add(WorkbenchUi.panel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT,8,8)).apply {
-            add(readToggle)
-            add(sourceToggle)
+
+        val outlineScroll = WorkbenchUi.scroll(outline)
+        val splitter = JBSplitter(false, 0.2f, 0.05f, 0.45f).apply {
+            firstComponent = outlineScroll
+            secondComponent = body
+            dividerWidth = com.intellij.util.ui.JBUI.scale(1)
+            border = com.intellij.util.ui.JBUI.Borders.empty()
+            background = WorkbenchUi.bg
+        }
+        outlineToggle.addActionListener {
+            outlineScroll.isVisible = outlineToggle.isSelected
+            splitter.revalidate()
+            splitter.repaint()
+        }
+
+        add(WorkbenchUi.panel(BorderLayout()).apply {
+            add(WorkbenchUi.panel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 8)).apply {
+                add(readToggle)
+                add(sourceToggle)
+                add(outlineToggle)
+            }, BorderLayout.WEST)
+            add(WorkbenchUi.panel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 8)).apply {
+                add(openInEditorBtn)
+            }, BorderLayout.EAST)
         }, BorderLayout.NORTH)
-        add(JSplitPane(JSplitPane.HORIZONTAL_SPLIT, WorkbenchUi.scroll(outline), body).apply { resizeWeight = 0.18; dividerLocation=190; border=com.intellij.util.ui.JBUI.Borders.empty(); background=WorkbenchUi.bg }, BorderLayout.CENTER)
+        add(splitter, BorderLayout.CENTER)
         html.addHyperlinkListener { event -> if (event.eventType == HyperlinkEvent.EventType.ACTIVATED) link(event.description) }
         outline.addListSelectionListener { if (!it.valueIsAdjusting) outline.selectedValue?.let { heading -> goToLine(heading.line) } }
         editor.caretModel.addCaretListener(object : com.intellij.openapi.editor.event.CaretListener {
@@ -72,6 +101,10 @@ internal class DocumentReader(private val project: Project, private val link: (S
         // IDEA 习惯：Cmd/Ctrl+F 直接唤起查找（自动切到原文视图）。
         registerKeyboardAction({ openSearch() },
             KeyStroke.getKeyStroke(KeyEvent.VK_F, Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx),
+            JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+        // IDEA 习惯：F4 跳转到主编辑器
+        registerKeyboardAction({ onOpenInEditor?.invoke() },
+            KeyStroke.getKeyStroke(KeyEvent.VK_F4, 0),
             JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
     }
 

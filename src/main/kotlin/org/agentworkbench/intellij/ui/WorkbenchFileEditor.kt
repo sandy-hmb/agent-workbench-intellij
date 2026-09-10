@@ -15,7 +15,7 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 
 internal class WorkbenchFileEditor(private val project: Project, private val file: WorkbenchVirtualFile) : UserDataHolderBase(), FileEditor {
-    private val panel = WorkbenchPanel(project).apply { refresh() }
+    val panel = WorkbenchPanel(project).apply { refresh() }
 
     override fun getComponent(): JComponent = panel
     override fun getPreferredFocusedComponent(): JComponent = panel
