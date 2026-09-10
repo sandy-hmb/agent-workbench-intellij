@@ -88,9 +88,6 @@ internal class DocumentReader(private val project: Project, private val link: (S
                 add(sourceToggle)
                 add(outlineToggle)
             }, BorderLayout.WEST)
-            add(WorkbenchUi.panel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 8)).apply {
-                add(openInEditorBtn)
-            }, BorderLayout.EAST)
         }, BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
         html.addHyperlinkListener { event -> if (event.eventType == HyperlinkEvent.EventType.ACTIVATED) link(event.description) }

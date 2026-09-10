@@ -790,9 +790,11 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         val repoRoots = repositories().associate { it.str("name").orEmpty() to Path.of(it.str("root").orEmpty()) }
 
         val reqFileMeta = files.firstOrNull { f ->
-            val p = f.str("path")?.lowercase() ?: ""
-            p.endsWith("requirements.md") || p == "requirements.md" || p.contains("requirements")
-        }
+            val p = f.str("path") ?: ""
+            p.equals("requirements/requirements.md", true) || p.equals("requirements.md", true) || p.endsWith("/requirements.md", true)
+        } ?: files.firstOrNull { it.str("path")?.endsWith("requirements.md", true) == true }
+          ?: files.firstOrNull { it.str("path")?.contains("requirements.md", true) == true }
+          ?: files.firstOrNull { it.str("path")?.contains("requirements", true) == true }
         val reqPath = reqFileMeta?.str("path") ?: "requirements/requirements.md"
 
         val localContent = if (!root.isNullOrBlank() && fDir.isNotBlank()) {
@@ -1256,17 +1258,21 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                 }
             }
         }, { failure ->
-            U.append(doctorBody, U.copy("doctor 运行失败：${failure.message}"))
-            updateFeatureDoctor("环境检查失败", U.amber, AllIcons.General.Warning)
+            val msg = failure.message ?: "未知错误"
+            U.append(doctorBody, U.copy("doctor 运行失败：$msg"))
+            updateFeatureDoctor("环境检查失败", U.amber, AllIcons.General.Warning, msg)
         })
         doctorBody.revalidate(); doctorBody.repaint()
         overviewDoctorBanner.revalidate(); overviewDoctorBanner.repaint()
     }
 
-    private fun updateFeatureDoctor(value: String, color: Color, icon: Icon) {
+    private fun updateFeatureDoctor(value: String, color: Color, icon: Icon, detail: String? = null) {
         featureDoctorLabel.text = value
         featureDoctorLabel.foreground = color
         featureDoctorLabel.icon = icon
+        val tip = detail?.let { "<html><b>$value</b><br/>${it.replace("\n", "<br/>")}</html>" } ?: value
+        featureDoctorLabel.toolTipText = tip
+        featureDoctorStrip.toolTipText = tip
     }
 
     private fun runDescribe() {

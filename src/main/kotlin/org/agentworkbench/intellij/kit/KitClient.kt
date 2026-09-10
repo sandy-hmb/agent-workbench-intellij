@@ -82,11 +82,12 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
                 waited += 200
                 if (waited >= TIMEOUT_MILLIS) error("Kit 命令超时")
             }
-            val text = stdout.get(1, TimeUnit.SECONDS)
-            val processError = stderr.get(1, TimeUnit.SECONDS)
+            val text = stdout.get(10, TimeUnit.SECONDS)
+            val processError = stderr.get(10, TimeUnit.SECONDS)
             if (process.exitValue() !in 0..1 || text.isBlank()) {
                 LOG.warn("kit $subcommand 退出码 ${process.exitValue()}；stderr=${processError.take(2000)}")
-                error("Kit 命令失败（退出码 ${process.exitValue()}）")
+                val reason = processError.trim().take(300).ifBlank { "退出码 ${process.exitValue()}" }
+                error("Kit 命令失败：$reason")
             }
             text
         } finally {
