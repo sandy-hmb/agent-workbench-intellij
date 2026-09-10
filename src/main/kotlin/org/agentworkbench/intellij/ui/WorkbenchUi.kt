@@ -117,6 +117,17 @@ internal object WorkbenchUi {
     fun progress(completed: Int, total: Int) = JProgressBar(0, total.coerceAtLeast(1)).apply {
         value = completed; isStringPainted = false; foreground = accent; background = WorkbenchUi.border; border = JBUI.Borders.empty()
         preferredSize = Dimension(JBUI.scale(96), JBUI.scale(3)); maximumSize = preferredSize
+        isVisible = total > 0
+    }
+    @JvmOverloads
+    fun planProgress(completed: Int, total: Int, percentage: Boolean = false, trustedCompleted: Int? = null): String = when {
+        total <= 0 -> "暂无计划"
+        trustedCompleted != null && trustedCompleted != completed -> {
+            val pct = if (percentage) " (${completed * 100 / total}%)" else ""
+            "$completed / $total 项 (可信 $trustedCompleted)$pct"
+        }
+        percentage -> "$completed / $total (${completed * 100 / total}%)"
+        else -> "$completed / $total 项"
     }
     fun table(table: JTable) {
         table.background = bg; table.foreground = text; table.gridColor = border; table.setShowGrid(false)
@@ -213,7 +224,9 @@ internal object KitSemantics {
 }
 
 internal fun JsonElement?.obj(): JsonObject? = if (this?.isJsonObject == true) asJsonObject else null
+internal fun JsonObject.obj(key: String): JsonObject? = get(key)?.obj()
 internal fun JsonObject.str(key: String): String? = get(key)?.takeIf { it.isJsonPrimitive }?.asString
+internal fun JsonObject.bool(key: String): Boolean? = get(key)?.takeIf { it.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull()
 internal fun JsonObject.objects(key: String) = get(key)?.takeIf { it.isJsonArray }?.asJsonArray?.mapNotNull { it.obj() }.orEmpty()
 internal fun JsonElement?.texts(): String = if (this?.isJsonArray == true) asJsonArray.joinToString { if (it.isJsonPrimitive) it.asString else "" } else ""
 internal fun JsonElement?.text(): String = if (this == null || isJsonNull) "—" else if (isJsonPrimitive) asString else toString()

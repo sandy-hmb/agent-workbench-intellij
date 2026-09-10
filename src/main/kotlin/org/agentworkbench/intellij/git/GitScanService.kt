@@ -37,14 +37,24 @@ internal class GitScanService(private val project: Project) : Disposable {
     fun refresh(repositories: List<JsonObject>) {
         request?.cancel(true)
         val current = ++generation
+        val existingById = scans.associateBy { it.id }
         val base = repositories.mapNotNull { item ->
             val path = item.get("absolutePath")?.asString ?: return@mapNotNull null
-            Scan(item.get("id").asString, item.get("role").asString, Path.of(path),
-                item.get("availability")?.asString ?: "unknown", item.get("description")?.asString.orEmpty())
+            val id = item.get("id").asString
+            val prev = existingById[id]
+            Scan(id, item.get("role").asString, Path.of(path),
+                item.get("availability")?.asString ?: "unknown", item.get("description")?.asString.orEmpty(),
+                scene = prev?.scene, remotes = prev?.remotes ?: emptyList(), lastCommit = prev?.lastCommit)
         }.sortedBy { it.role == "kit" }
-        scans = base
-        scanning = base.isNotEmpty()
-        notifyListeners()
+
+        val reposChanged = scans.map { it.id to it.root } != base.map { it.id to it.root }
+        if (reposChanged) {
+            scans = base
+            scanning = base.isNotEmpty()
+            notifyListeners()
+        } else {
+            scanning = base.isNotEmpty()
+        }
         if (base.isEmpty()) return
         request = ApplicationManager.getApplication().executeOnPooledThread {
             val git = NativeGit.forProject(project)
@@ -54,9 +64,12 @@ internal class GitScanService(private val project: Project) : Disposable {
             }
             ApplicationManager.getApplication().invokeLater {
                 if (!project.isDisposed && current == generation) {
+                    val hasChanged = updated != scans
                     scans = updated
                     scanning = false
-                    notifyListeners()
+                    if (hasChanged || reposChanged) {
+                        notifyListeners()
+                    }
                 }
             }
         }

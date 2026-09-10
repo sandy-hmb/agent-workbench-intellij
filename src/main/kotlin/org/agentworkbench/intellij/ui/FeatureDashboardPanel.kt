@@ -105,6 +105,9 @@ internal class FeatureDashboardPanel(
         foreground = JBColor(0x6B7280, 0x9CA3AF)
     }
 
+    private var lastTasksFingerprint: String? = null
+    private var lastReposFingerprint: String? = null
+
     private var onNavigateToTab: ((Int) -> Unit)? = null
 
     // 折叠状态（默认同屏展开展示！）
@@ -381,60 +384,98 @@ internal class FeatureDashboardPanel(
         val completedCount = tasks.count { it.get("completed")?.asBoolean == true }
         val pct = if (totalCount > 0) (completedCount * 100 / totalCount) else 0
 
+        val planSummary = summary?.get("planSummary").obj()
+        val trustedObj = planSummary?.get("trustedProgress").obj()
+        val isTrustedApplicable = trustedObj?.get("applicable")?.asBoolean == true
+        val trustedDone = if (isTrustedApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: completedCount else null
+        val untrustedCount = if (isTrustedApplicable && trustedDone != null && completedCount > trustedDone) completedCount - trustedDone else 0
+
         taskProgressBar.value = pct
-        taskProgressLabel.text = "$completedCount / $totalCount ($pct%)"
-
-        if (tasks.isEmpty()) {
-            tasksContainer.add(JLabel("该需求暂无任务记录").apply {
-                font = font.deriveFont(11f)
-                foreground = U.muted
-                border = JBUI.Borders.empty(8)
-            })
+        taskProgressBar.isVisible = totalCount > 0
+        taskProgressLabel.text = U.planProgress(completedCount, totalCount, percentage = true, trustedCompleted = if (isTrustedApplicable) trustedDone else null)
+        if (untrustedCount > 0) {
+            taskProgressLabel.toolTipText = "已标记完成 $completedCount 项，但其中 $untrustedCount 项缺乏有效凭据记录或未通过验证 (Untrusted)"
+            taskProgressLabel.foreground = JBColor(0xD97706, 0xF59E0B)
         } else {
-            var foundActive = false
-            tasks.forEach { task ->
-                val id = task.str("id") ?: ""
-                val taskTitle = task.str("title") ?: id
-                val isDone = task.get("completed")?.asBoolean == true
-                val isActive = !isDone && !foundActive
-                if (isActive) foundActive = true
-
-                val row = createTaskRow(task, id, taskTitle, isDone, isActive) {
-                    onOpenTask(task)
-                }
-                tasksContainer.add(row)
-                tasksContainer.add(Box.createVerticalStrut(JBUI.scale(2)))
-            }
-            tasksContainer.add(Box.createVerticalGlue())
+            taskProgressLabel.toolTipText = null
+            taskProgressLabel.foreground = U.muted
         }
-        tasksContainer.revalidate()
-        tasksContainer.repaint()
+
+        val tasksFingerprint = tasks.joinToString(";") {
+            "${it.str("id")}:${it.get("completed")?.asBoolean}:${it.get("trusted")?.takeIf { p -> p.isJsonPrimitive }?.asBoolean}:${it.str("title")}"
+        }
+        if (tasksFingerprint != lastTasksFingerprint || tasksContainer.componentCount == 0) {
+            lastTasksFingerprint = tasksFingerprint
+            val savedTaskScroll = tasksScroll.viewport.viewPosition
+            tasksContainer.removeAll()
+
+            if (tasks.isEmpty()) {
+                tasksContainer.add(JLabel("该需求暂无任务记录").apply {
+                    font = font.deriveFont(11f)
+                    foreground = U.muted
+                    border = JBUI.Borders.empty(8)
+                })
+            } else {
+                var foundActive = false
+                tasks.forEach { task ->
+                    val id = task.str("id") ?: ""
+                    val taskTitle = task.str("title") ?: id
+                    val isDone = task.get("completed")?.asBoolean == true
+                    val isActive = !isDone && !foundActive
+                    if (isActive) foundActive = true
+
+                    val row = createTaskRow(task, id, taskTitle, isDone, isActive) {
+                        onOpenTask(task)
+                    }
+                    tasksContainer.add(row)
+                    tasksContainer.add(Box.createVerticalStrut(JBUI.scale(2)))
+                }
+                tasksContainer.add(Box.createVerticalGlue())
+            }
+            tasksContainer.revalidate()
+            tasksContainer.repaint()
+            SwingUtilities.invokeLater {
+                tasksScroll.viewport.viewPosition = savedTaskScroll
+            }
+        }
 
         // 3. 渲染真实关联代码仓与变更
-        reposContainer.removeAll()
         reposCountLabel.text = "${repositoryBindings.size} 个关联仓库"
-
-        if (repositoryBindings.isEmpty()) {
-            reposContainer.add(JLabel("该需求未关联任何业务仓库").apply {
-                font = font.deriveFont(11f)
-                foreground = U.muted
-                border = JBUI.Borders.empty(8)
-            })
-        } else {
-            repositoryBindings.forEach { binding ->
-                val repoName = binding.str("repository").orEmpty()
-                val baseBranch = binding.str("baseBranch") ?: "master"
-                val workBranch = binding.str("workBranch") ?: "feat/$currentSlug"
-                val scene = scenes[repoName] as? NativeGit.Snapshot.Available
-
-                val card = createRepoCard(repoName, baseBranch, workBranch, scene, repoRoots[repoName])
-                reposContainer.add(card)
-                reposContainer.add(Box.createVerticalStrut(JBUI.scale(4)))
-            }
-            reposContainer.add(Box.createVerticalGlue())
+        val reposFingerprint = repositoryBindings.joinToString(";") { b ->
+            val repoName = b.str("repository").orEmpty()
+            val scene = scenes[repoName] as? NativeGit.Snapshot.Available
+            "$repoName:${scene?.branch}:${scene?.changes}:${scene?.ahead}:${scene?.behind}"
         }
-        reposContainer.revalidate()
-        reposContainer.repaint()
+        if (reposFingerprint != lastReposFingerprint || reposContainer.componentCount == 0) {
+            lastReposFingerprint = reposFingerprint
+            val savedRepoScroll = reposScroll.viewport.viewPosition
+            reposContainer.removeAll()
+
+            if (repositoryBindings.isEmpty()) {
+                reposContainer.add(JLabel("该需求未关联任何业务仓库").apply {
+                    font = font.deriveFont(11f)
+                    foreground = U.muted
+                    border = JBUI.Borders.empty(8)
+                })
+            } else {
+                repositoryBindings.forEach { binding ->
+                    val repoName = binding.str("repository").orEmpty()
+                    val baseBranch = binding.str("baseBranch") ?: "master"
+                    val workBranch = binding.str("workBranch") ?: "feat/$currentSlug"
+                    val scene = scenes[repoName] as? NativeGit.Snapshot.Available
+
+                    val card = createRepoCard(repoName, baseBranch, workBranch, scene, repoRoots[repoName])
+                    reposContainer.add(card)
+                    reposContainer.add(Box.createVerticalStrut(JBUI.scale(4)))
+                }
+                reposContainer.add(Box.createVerticalGlue())
+            }
+            reposContainer.revalidate()
+            reposContainer.repaint()
+            SwingUtilities.invokeLater {
+                reposScroll.viewport.viewPosition = savedRepoScroll
+            }
+        }
     }
 
     fun setRequirementsContent(path: String, content: String) {
@@ -512,35 +553,76 @@ internal class FeatureDashboardPanel(
         onClick: () -> Unit
     ): JPanel = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
         isOpaque = true
-        background = if (isActive) JBColor(0xEFF6FF, 0x1E2B3E) else JBColor(0xFFFFFF, 0x222427)
+        background = if (isActive) U.selection else U.surface
         border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(
-                if (isActive) JBColor(0x3B82F6, 0x2563EB) else JBColor(0xF3F4F6, 0x2C2E33),
-                1
-            ),
+            BorderFactory.createMatteBorder(0, if (isActive) JBUI.scale(2) else 0, 1, 0, if (isActive) U.accent else U.border),
             JBUI.Borders.empty(3, 6)
         )
         maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
         preferredSize = Dimension(JBUI.scale(200), JBUI.scale(28))
 
-        val checkIcon = if (isDone) AllIcons.General.InspectionsOK else AllIcons.General.TodoDefault
-        val checkLbl = JLabel(checkIcon)
+        val trusted = task.get("trusted")?.takeIf { it.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull()
+        val validationKind = task.str("validationKind")
+        val deliverables = task.objects("deliverables")
+
+        val checkIcon = when {
+            isDone && trusted == true -> AllIcons.General.InspectionsOK
+            isDone && trusted == false -> AllIcons.General.Warning
+            isDone -> AllIcons.General.InspectionsOK
+            else -> AllIcons.General.TodoDefault
+        }
+        val checkTooltip = when {
+            isDone && trusted == true -> "已完成并具备有效验证凭据"
+            isDone && trusted == false -> "已标记完成，但缺乏有效执行凭据或退出码异常 (Untrusted)"
+            isDone -> "已完成"
+            else -> "待完成"
+        }
+        val checkLbl = JLabel(checkIcon).apply { toolTipText = checkTooltip }
 
         val idLbl = JLabel("[$id]").apply {
             font = Font(Font.MONOSPACED, Font.BOLD, JBUI.scale(10))
-            foreground = if (isDone) JBColor(0x059669, 0x34D399) else if (isActive) JBColor(0x2563EB, 0x60A5FA) else U.muted
+            foreground = if (isDone && trusted == false) JBColor(0xD97706, 0xF59E0B) else if (isDone) JBColor(0x059669, 0x34D399) else if (isActive) JBColor(0x2563EB, 0x60A5FA) else U.muted
         }
 
+        val delivTip = deliverables.joinToString("<br/>") { d -> "• " + (d.str("path") ?: d.str("symbol") ?: "") }
         val titleLbl = JLabel(taskTitle).apply {
             font = font.deriveFont(if (isActive) Font.BOLD else Font.PLAIN, 11f)
             foreground = if (isDone) JBColor(0x9CA3AF, 0x6B7280) else if (isActive) JBColor(0x1D4ED8, 0xF3F4F6) else JBColor(0x1F2937, 0xE5E7EB)
-            toolTipText = taskTitle
+            toolTipText = buildString {
+                append("<html><b>[").append(id).append("] ").append(taskTitle).append("</b>")
+                append("<br/>状态: ")
+                when {
+                    isDone && trusted == true -> append("<font color='#10B981'>已完成 (凭据有效)</font>")
+                    isDone && trusted == false -> append("<font color='#F59E0B'>已打勾但缺乏凭据 (Untrusted)</font>")
+                    isDone -> append("已完成")
+                    else -> append("待完成")
+                }
+                if (validationKind != null) append("<br/>验证: ").append(validationKind)
+                if (deliverables.isNotEmpty()) {
+                    append("<br/>交付物 (${deliverables.size}):<br/>").append(delivTip)
+                }
+                append("</html>")
+            }
         }
 
         val leftBox = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
             add(checkLbl)
             add(idLbl)
+            if (validationKind != null) {
+                add(JLabel("[$validationKind]").apply {
+                    font = font.deriveFont(9f)
+                    foreground = U.faint
+                    toolTipText = "验证方式: $validationKind"
+                })
+            }
+            if (deliverables.isNotEmpty()) {
+                add(JLabel("📦${deliverables.size}").apply {
+                    font = font.deriveFont(9f)
+                    foreground = U.faint
+                    toolTipText = "<html>交付文件 (${deliverables.size}):<br/>$delivTip</html>"
+                })
+            }
             add(titleLbl)
         }
 
@@ -571,10 +653,10 @@ internal class FeatureDashboardPanel(
     ): JPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = true
-        background = JBColor(0xFFFFFF, 0x222427)
+        background = U.surface
         border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(JBColor(0xE5E7EB, 0x2C2E33), 1),
-            JBUI.Borders.empty(6, 10)
+            BottomLine(U.border),
+            JBUI.Borders.empty(6, 4)
         )
         maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(76))
         preferredSize = Dimension(JBUI.scale(220), JBUI.scale(72))

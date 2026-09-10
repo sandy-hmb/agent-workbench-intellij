@@ -8,6 +8,7 @@ import org.agentworkbench.intellij.ui.WorkbenchPanel
 import org.agentworkbench.intellij.ui.WorkbenchTabs
 import java.awt.Component
 import java.awt.Container
+import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JTable
 import javax.swing.JTabbedPane
@@ -30,13 +31,24 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         try {
             val controls = descendants(panel)
             val tabs = controls.filterIsInstance<WorkbenchTabs>().first { it.tabCount==6 }
-            assertEquals(listOf("总览与说明", "PRD 规范文档", "任务拆解与执行", "代码变更与比对", "验证与测试", "流程"), (0 until tabs.tabCount).map(tabs::titleAt))
+            assertEquals(listOf("概览", "文档", "计划", "变更", "验证", "流程"), (0 until tabs.tabCount).map(tabs::titleAt))
             val nav = controls.filterIsInstance<javax.swing.JButton>().mapNotNull { it.name }
             assertTrue(nav.containsAll(listOf("nav-overview","nav-features","nav-runs","nav-extensions")))
+            val buttons = controls.filterIsInstance<JButton>().map { it.text }
+            assertTrue(buttons.containsAll(listOf("Log", "Diff", "Commit", "Branches", "Fetch")))
             assertTrue(controls.filterIsInstance<JComboBox<*>>().size >= 3)
             assertTrue(controls.filterIsInstance<JTable>().all { !it.model.isCellEditable(0, 1) })
             assertTrue(controls.filterIsInstance<JTextArea>().all { !it.isEditable })
+            assertEquals("暂无计划", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(0, 0))
         } finally { Disposer.dispose(panel) }
+    }
+
+    fun testPlanProgressFormatting() {
+        assertEquals("暂无计划", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(0, 0))
+        assertEquals("3 / 5 项", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5))
+        assertEquals("3 / 5 (60%)", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5, percentage = true))
+        assertEquals("3 / 5 项 (可信 2)", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5, percentage = false, trustedCompleted = 2))
+        assertEquals("3 / 5 项 (可信 2) (60%)", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5, percentage = true, trustedCompleted = 2))
     }
 
     private fun descendants(component: Component): List<Component> = listOf(component) +

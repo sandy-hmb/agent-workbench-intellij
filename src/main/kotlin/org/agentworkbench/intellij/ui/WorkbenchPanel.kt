@@ -52,6 +52,9 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private val modeNotice = U.label("", 11, U.amber)
     private val pages = U.panel(CardLayout())
     private val overviewBody = U.column()
+    private val overviewScrollPane = U.page(U.padded(overviewBody) as JPanel)
+    private var lastWorkspaceSummaryFingerprint: String? = null
+    private var lastFeatureFilterFingerprint: String? = null
     private val overviewPath = U.label("",11,U.muted)
     private val overviewMetrics = U.panel()
     private val ongoing = U.column()
@@ -69,7 +72,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private val featureModel = DefaultListModel<JsonObject>()
     private val featureList = JBList(featureModel)
     private val search = SearchTextField()
-    private val lifecycle = JComboBox(arrayOf("全部", "planning", "development", "testing", "paused", "done"))
+    private val lifecycle = JComboBox(arrayOf("全部", "待评审", "planning", "development", "testing", "paused", "done"))
     private val repoFilter = JComboBox(arrayOf("全部仓库"))
     private val sort = JComboBox(arrayOf("最近更新", "名称"))
     private val featureHeader = U.column()
@@ -80,37 +83,18 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         onShowDiff = { _, _ -> tabs.selectedIndex = CHANGES },
         onOpenDoc = { openDocument(it) }
     )
-    private val featureDoctorStrip = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
-        background = com.intellij.ui.JBColor(0xECFDF5, 0x16261E)
-        border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xA7F3D0, 0x234A35), 1),
-            JBUI.Borders.empty(6, 12)
-        )
-        val checkIcon = JLabel(AllIcons.General.InspectionsOK)
-        val label = JLabel("工作区体检正常：所有代码仓配置完备 · 环境已通过检验 · 0 项错误").apply {
-            font = font.deriveFont(11.5f)
-            foreground = com.intellij.ui.JBColor(0x065F46, 0x34D399)
-        }
-        val leftBox = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-            add(checkIcon)
-            add(label)
-        }
-        val viewDetailBtn = JButton("查看体检详情").apply {
-            font = font.deriveFont(11f)
-            foreground = com.intellij.ui.JBColor(0x2563EB, 0x60A5FA)
-            isBorderPainted = false
-            isContentAreaFilled = false
-            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-            addActionListener { navigate("diagnostics") }
-        }
-        add(leftBox, BorderLayout.CENTER)
-        add(viewDetailBtn, BorderLayout.EAST)
+    private val featureDoctorLabel = JLabel("环境检查中…", AllIcons.General.Information, JLabel.LEFT).apply {
+        font = font.deriveFont(11f)
+        foreground = U.muted
     }
+    private val featureDoctorStrip = U.row(
+        featureDoctorLabel,
+        U.button("查看详情", true) { navigate("diagnostics") }
+    ).apply { border = JBUI.Borders.empty(2, 0, 4, 0) }
     private val tabs = WorkbenchTabs()
     private val planTitle = U.label("计划", 14, bold = true)
     private val taskTable = table("编号", "完成", "任务", "依赖", "原文位置")
-    private val taskFilter = JComboBox(arrayOf("全部任务", "待完成", "已完成"))
+    private val taskFilter = JComboBox(arrayOf("全部任务", "待完成", "已完成", "可信已完成", "缺凭据/待核验"))
     private val filePicker = JComboBox<String>()
     private val documentStatus = U.label("选择需求文档", 10, U.muted)
     private val reader = DocumentReader(project, ::openLink)
@@ -149,6 +133,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private var snapshotDirty = false
     private var doctorRan = false
     private var runningDoctor = false
+    private var businessReposExpanded = false
     private var describeLoaded = false
     private var describeSummaries = emptyMap<String, String>()
     private val pendingKit = mutableSetOf<String>()
@@ -216,7 +201,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         git.preferredSize = Dimension(1, JBUI.scale(405))
         U.append(overviewBody, git, 20)
         U.append(overviewBody, twoColumns(ongoing, overviewAttention, 300), 28)
-        pages.add(U.page(U.padded(overviewBody) as JPanel), "overview")
+        pages.add(overviewScrollPane, "overview")
 
         U.append(featuresPage, pageHeader("Feature 工作台", "浏览全部需求与历史记录"))
         lifecycle.renderer = object : DefaultListCellRenderer() { override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, selected: Boolean, focus: Boolean): Component = super.getListCellRendererComponent(list, if(value == "全部") value else U.status(value?.toString()), index, selected, focus) }
@@ -231,8 +216,21 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         featureList.setEmptyText("没有符合条件的需求")
         featureList.cellRenderer = ListCellRenderer<JsonObject> { _, value, _, selected, _ ->
             val plan = value.get("planSummary").obj(); val done = plan?.str("completed")?.toIntOrNull() ?: 0; val total = plan?.str("total")?.toIntOrNull() ?: 0
+            val trustedObj = plan?.get("trustedProgress").obj()
+            val isTrustedApplicable = trustedObj?.get("applicable")?.asBoolean == true
+            val trustedDone = if (isTrustedApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: done else null
+            val untrustedCount = if (isTrustedApplicable && trustedDone != null && done > trustedDone) done - trustedDone else 0
+
             val left = U.column(6, U.flow(U.label(value.str("title") ?: value.str("slug").orEmpty(), 12, U.text, bold = true), U.badge(U.status(value.str("status")))), U.mono("${value.str("slug")}  ·  ${value.objects("repositoryBindings").size} 个仓库  ·  ${value.str("lastUpdated")}"))
-            U.row(left, U.column(10, U.label("$done / $total 项", 11, U.muted), U.progress(done, total))).apply {
+            val progressLabel = U.label(
+                U.planProgress(done, total, trustedCompleted = if (isTrustedApplicable) trustedDone else null),
+                11,
+                if (untrustedCount > 0) U.amber else U.muted
+            ).apply {
+                if (untrustedCount > 0) toolTipText = "已打勾 $done 项，但其中 $untrustedCount 项缺乏有效测试/执行凭据"
+            }
+            val progress = if (total > 0) U.column(10, progressLabel, U.progress(done, total)) else U.label("暂无计划", 11, U.faint)
+            U.row(left, progress).apply {
                 border = BorderFactory.createCompoundBorder(BottomLine(U.border), JBUI.Borders.empty(14, 8))
                 if (selected) paintBackground(this, U.selection)
             }
@@ -277,7 +275,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         U.append(featuresPage, featureList, 16)
         pages.add(U.page(U.padded(featuresPage) as JPanel), "features")
 
-        tabs.addTab("总览与说明", featureDashboard)
+        tabs.addTab("概览", featureDashboard)
         filePicker.preferredSize = Dimension(JBUI.scale(320), JBUI.scale(30))
         val openInEditorBtn = U.button("在编辑器中打开", true) {
             val slug = selectedSlug ?: return@button
@@ -296,13 +294,13 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         }
         val changesPanel = WorkbenchTabs().apply { addTab("需求分支已提交", committedChanges); addTab("当前工作目录", workingGit) }
 
-        tabs.addTab("PRD 规范文档", docPanel)
-        tabs.addTab("任务拆解与执行", planPanel)
-        tabs.addTab("代码变更与比对", changesPanel)
-        tabs.addTab("验证与测试", U.page(verificationBody))
+        tabs.addTab("文档", docPanel)
+        tabs.addTab("计划", planPanel)
+        tabs.addTab("变更", changesPanel)
+        tabs.addTab("验证", U.page(verificationBody))
         tabs.addTab("流程", U.panel().apply { add(U.row(U.flow(U.label("运行记录",11,U.muted), runPicker), runStatus).apply { border = JBUI.Borders.empty(22,0,20,0) }, BorderLayout.NORTH); add(U.page(workflowBody)) })
 
-        val featureNorth = U.column(8, featureHeader, featureDoctorStrip)
+        val featureNorth = U.column(4, featureHeader, featureDoctorStrip)
         pages.add(U.padded(U.panel().apply { add(featureNorth, BorderLayout.NORTH); add(tabs) }), "feature")
         pages.add(U.page(U.padded(globalRuns) as JPanel), "runs")
         pages.add(U.page(U.padded(globalExtensions) as JPanel), "extensions")
@@ -400,7 +398,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         if(disposed) return
         val next = service.snapshot(); val changedRoot = state.kitRoot != next.kitRoot; state = next
         (layout as? CardLayout)?.show(this, if (state.kitRoot.isNullOrBlank()) "EMPTY" else "CONTENT")
-        if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; describeLoaded=false; describeSummaries=emptyMap(); pendingKit.clear(); restore() }
+        if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; businessReposExpanded=false; describeLoaded=false; describeSummaries=emptyMap(); pendingKit.clear(); restore() }
         overviewPath.text=state.kitRoot ?: "在侧栏入口绑定工作流 Kit"
         workspaceName.text = state.workspace?.data.obj()?.get("identity").obj()?.str("name") ?: "研发工作区"
         workspacePath.text = state.kitRoot?.let { Path.of(it).fileName.toString() } ?: "尚未绑定 Kit"
@@ -432,8 +430,19 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         U.append(nav, navButton("runs", "流程记录", AllIcons.Vcs.History) { navigate("runs") },2)
         U.append(nav, navButton("extensions", "扩展", AllIcons.Nodes.Plugin, workflowData?.objects("extensions")?.size?.toString().orEmpty()) { navigate("extensions") },2)
         for((role,title) in listOf("business" to "业务仓库", "kit" to "工作流仓库")) {
-            U.append(nav, U.row(U.label(title,10,U.faint),U.label(repositories().count { it.str("role")==role }.toString(),10,U.faint)).apply { background=U.surface; border=JBUI.Borders.empty(24,11,10,11) })
-            repositories().filter { it.str("role")==role }.forEach { repo ->
+            val roleRepos = repositories().filter { it.str("role")==role }
+            val collapsible = role == "business" && roleRepos.size > 5
+            val groupAction = if (collapsible) U.button(if (businessReposExpanded) "收起" else "全部 ${roleRepos.size}", true) {
+                businessReposExpanded = !businessReposExpanded
+                renderSidebar()
+            }.apply {
+                icon = if (businessReposExpanded) AllIcons.General.ChevronDown else AllIcons.General.ChevronRight
+                horizontalTextPosition = SwingConstants.LEFT
+                name = "nav-repository-group-business"
+            } else U.label(roleRepos.size.toString(),10,U.faint)
+            U.append(nav, U.row(U.label(title,10,U.faint),groupAction).apply { background=U.surface; border=JBUI.Borders.empty(24,11,10,11) })
+            val visibleRepos = if (collapsible && !businessReposExpanded) roleRepos.take(5) else roleRepos
+            visibleRepos.forEach { repo ->
                 val name=repo.str("id").orEmpty(); val scene=scenes[name] as? NativeGit.Snapshot.Available
                 U.append(nav, navButton("repo/$name",name,if(role=="kit") AllIcons.Vcs.Branch else AllIcons.Nodes.Module,scene?.changes?.takeIf { it>0 }?.toString().orEmpty()) { navigate("repositories"); repositoryGit.focusRepository(name) },2)
             }
@@ -447,30 +456,116 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         preferredSize=Dimension(JBUI.scale(204),JBUI.scale(36)); maximumSize=Dimension(Int.MAX_VALUE,JBUI.scale(36)); toolTipText=value; name="nav-$key"
     }
     private fun renderWorkspaceSummary() {
-        val values=scenes.values.filterIsInstance<NativeGit.Snapshot.Available>()
-        val pending=state.features.count { it.str("status") !in listOf("done","paused") }
+        val values = scenes.values.filterIsInstance<NativeGit.Snapshot.Available>()
+        val pending = state.features.count { it.str("status") !in listOf("done","paused") }
+        val repoIssues = repoAttention()
+        val featIssues = featureAttention()
+        val allAttention = attention()
+
+        val summaryFingerprint = buildString {
+            append(repositories().size).append(';')
+            append(pending).append(';')
+            append(values.sumOf { it.changes }).append(';')
+            append(allAttention.joinToString(",")).append(';')
+            state.features.filter { it.str("status") != "done" }.take(5).forEach {
+                append(it.str("slug")).append(':').append(it.str("status")).append(':').append(it.get("planSummary").obj()?.str("completed")).append(';')
+            }
+        }
+        if (summaryFingerprint == lastWorkspaceSummaryFingerprint && overviewMetrics.componentCount > 0) {
+            return
+        }
+        lastWorkspaceSummaryFingerprint = summaryFingerprint
+
+        val savedPos = overviewScrollPane.viewport.viewPosition
+
+        val attentionSub = when {
+            repoIssues.isNotEmpty() && featIssues.isNotEmpty() -> "${repoIssues.size} 仓 / ${featIssues.size} 需求 ↗"
+            repoIssues.isNotEmpty() -> "${repoIssues.size} 个仓库异常 ↗"
+            featIssues.isNotEmpty() -> "${featIssues.size} 个需求待评审 ↗"
+            allAttention.isNotEmpty() -> "${allAttention.size} 项需关注 ↗"
+            else -> "暂无已知阻塞 ↗"
+        }
+        val attentionTip = if (allAttention.isNotEmpty()) {
+            "<html><b>当前需要关注 (${allAttention.size} 项):</b><br/>" +
+                allAttention.joinToString("<br/>") { "• $it" } + "</html>"
+        } else null
+
         overviewMetrics.removeAll(); overviewMetrics.add(U.metrics(
-            clickableMetric("Git 仓库",repositories().size.toString(),"${repositories().count { it.str("role")=="business" }} 个业务仓 ↗") { navigate("repositories") },
-            clickableMetric("进行中的 Feature",pending.toString(),"查看需求列表 ↗") { navigate("features") },
-            clickableMetric("未提交文件",if(scenes.isEmpty()) "—" else values.sumOf { it.changes }.toString(),"筛选有变更仓库 ↗") { git.filter("changed") },
-            clickableMetric("需要关注",attention().size.toString(),"冲突、仓库与记录 ↗",if(attention().isEmpty()) U.text else U.amber) { git.filter("attention") }
+            clickableMetric("Git 仓库", repositories().size.toString(), "${repositories().count { it.str("role")=="business" }} 个业务仓 ↗") { navigate("repositories") },
+            clickableMetric("进行中的 Feature", pending.toString(), "查看需求列表 ↗") { navigate("features") },
+            clickableMetric("未提交文件", if (scenes.isEmpty()) "—" else values.sumOf { it.changes }.toString(), "筛选有变更仓库 ↗") { git.filter("changed") },
+            clickableMetric("需要关注", allAttention.size.toString(), attentionSub, if (allAttention.isEmpty()) U.text else U.amber, tooltip = attentionTip) {
+                if (featIssues.isNotEmpty()) {
+                    changing = true
+                    lifecycle.selectedItem = "待评审"
+                    changing = false
+                    navigate("features")
+                    filterFeatures()
+                    if (featureModel.size > 0) {
+                        featureList.selectedIndex = 0
+                    }
+                } else if (repoIssues.isNotEmpty()) {
+                    git.filter("attention")
+                }
+            }
         ))
-        ongoing.removeAll(); U.append(ongoing,U.section("进行中的 Feature",U.button("查看全部  →",true) { navigate("features") }))
-        state.features.filter { it.str("status")!="done" }.take(5).forEach { U.append(ongoing,featureRow(it)) }
-        if(state.features.isEmpty()) U.append(ongoing,U.empty("暂无需求记录","需求由你的 Agent 或其他工具推进，工作台只负责查看。"))
-        renderAttention(overviewAttention, attention()); overviewBody.revalidate(); overviewBody.repaint()
+        ongoing.removeAll(); U.append(ongoing, U.section("进行中的 Feature", U.button("查看全部  →", true) { navigate("features") }))
+        state.features.filter { it.str("status") != "done" }.take(5).forEach { U.append(ongoing, featureRow(it)) }
+        if (state.features.isEmpty()) U.append(ongoing, U.empty("暂无需求记录", "需求由你的 Agent 或其他工具推进，工作台只负责查看。"))
+        renderAttention(overviewAttention, allAttention)
+        overviewBody.revalidate()
+        overviewBody.repaint()
+        SwingUtilities.invokeLater {
+            overviewScrollPane.viewport.viewPosition = savedPos
+        }
     }
-    private fun attention(): List<String> = repositories().mapNotNull { repo ->
-        val id=repo.str("id").orEmpty();val scene=scenes[id]
-        when { repo.str("availability")!="present" -> "$id · 仓库目录不可用"; scene is NativeGit.Snapshot.Unavailable -> "$id · 无法读取 Git 现场"; scene is NativeGit.Snapshot.Available && scene.conflicts -> "$id · 有未处理冲突"; else -> null }
-    } + state.features.filter { it.str("status")!="done" && KitSemantics.reviewPending(it.get("documentReviews").obj()?.str("plan")) }.map { "${it.str("title")} · 计划${it.get("documentReviews").obj()?.str("plan")}" } + listOfNotNull(state.error)
+    private fun repoAttention(): List<String> = repositories().mapNotNull { repo ->
+        val id = repo.str("id").orEmpty(); val scene = scenes[id]
+        when {
+            repo.str("availability") != "present" -> "$id · 仓库目录不可用"
+            scene is NativeGit.Snapshot.Unavailable -> "$id · 无法读取 Git 现场"
+            scene is NativeGit.Snapshot.Available && scene.conflicts -> "$id · 有未处理冲突"
+            else -> null
+        }
+    }
+    private fun featureAttention(): List<String> = state.features.filter {
+        it.str("status") != "done" && KitSemantics.reviewPending(it.get("documentReviews").obj()?.str("plan"))
+    }.map { "${it.str("title")} · 计划${it.get("documentReviews").obj()?.str("plan")}" }
+
+    private fun attention(): List<String> = repoAttention() + featureAttention() + listOfNotNull(state.error)
     private fun renderAttention(target:JPanel, items:List<String>) { target.removeAll(); U.append(target,U.section("当前关注")); if(items.isEmpty()) U.append(target,U.copy("暂无已知阻塞。验证的当前代码适用性需单独核对。")) else items.forEach { U.append(target,U.copy(it),10) }; target.revalidate(); target.repaint() }
     private fun filterFeatures() {
         if(changing) return
         val query=search.text.trim()
-        var rows=state.features.filter { (lifecycle.selectedItem=="全部" || it.str("status")==lifecycle.selectedItem) && (query.isBlank() || "${it.str("slug")} ${it.str("title")}".contains(query,true)) && (repoFilter.selectedItem=="全部仓库" || it.objects("repositoryBindings").any { b -> b.str("repository")==repoFilter.selectedItem }) }
+        val statusMatch: (JsonObject) -> Boolean = { feat ->
+            when (lifecycle.selectedItem) {
+                "全部" -> true
+                "待评审" -> KitSemantics.reviewPending(feat.get("documentReviews").obj()?.str("plan"))
+                else -> feat.str("status") == lifecycle.selectedItem
+            }
+        }
+        var rows=state.features.filter { statusMatch(it) && (query.isBlank() || "${it.str("slug")} ${it.str("title")}".contains(query,true)) && (repoFilter.selectedItem=="全部仓库" || it.objects("repositoryBindings").any { b -> b.str("repository")==repoFilter.selectedItem }) }
         rows=if(sort.selectedIndex==0) rows.sortedByDescending { it.str("lastUpdated") } else rows.sortedBy { it.str("title") }
+
+        val currentFingerprint = "${lifecycle.selectedItem}:${repoFilter.selectedItem}:${sort.selectedIndex}:$query;" +
+            rows.joinToString(";") { "${it.str("slug")}:${it.str("status")}:${it.str("lastUpdated")}" }
+        if (currentFingerprint == lastFeatureFilterFingerprint && featureModel.size == rows.size) {
+            return
+        }
+        lastFeatureFilterFingerprint = currentFingerprint
+
+        val selectedSlug = featureList.selectedValue?.str("slug")
+        val scrollViewport = featureList.parent as? JViewport
+        val savedScroll = scrollViewport?.viewPosition
+
         featureModel.clear(); rows.forEach(featureModel::addElement)
+        if (selectedSlug != null) {
+            val idx = (0 until featureModel.size).indexOfFirst { featureModel.getElementAt(it).str("slug") == selectedSlug }
+            if (idx >= 0) featureList.selectedIndex = idx
+        }
+        if (savedScroll != null) {
+            SwingUtilities.invokeLater { scrollViewport?.viewPosition = savedScroll }
+        }
         featureCount.text="${rows.size} 个需求 · 已加载 ${state.features.size} 个"
         featureList.revalidate(); featureList.repaint()
     }
@@ -481,9 +576,22 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     }
     private fun featureRow(item:JsonObject): JPanel {
         val plan=item.get("planSummary").obj();val done=plan?.str("completed")?.toIntOrNull()?:0;val total=plan?.str("total")?.toIntOrNull()?:0
+        val trustedObj = plan?.get("trustedProgress").obj()
+        val isTrustedApplicable = trustedObj?.get("applicable")?.asBoolean == true
+        val trustedDone = if (isTrustedApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: done else null
+        val untrustedCount = if (isTrustedApplicable && trustedDone != null && done > trustedDone) done - trustedDone else 0
+
         val title=U.flow(U.button(item.str("title")?:item.str("slug").orEmpty(),true) { selectFeature(item.str("slug")!!) }.apply { foreground=U.text;font=U.label("",12,bold=true).font;border=JBUI.Borders.empty(3,0) }, U.badge(U.status(item.str("status"))))
         val left=U.column(8,title,U.mono("${item.str("slug")}  ·  ${item.objects("repositoryBindings").size} 个仓库  ·  ${item.str("lastUpdated")}"))
-        return U.row(left,U.column(10,U.label("$done / $total 项",11,U.muted),U.progress(done,total))).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(17,0)); name="feature-${item.str("slug")}" }
+        val progressLabel = U.label(
+            U.planProgress(done, total, trustedCompleted = if (isTrustedApplicable) trustedDone else null),
+            11,
+            if (untrustedCount > 0) U.amber else U.muted
+        ).apply {
+            if (untrustedCount > 0) toolTipText = "已打勾 $done 项，但其中 $untrustedCount 项缺乏有效测试/执行凭据"
+        }
+        val progress = if (total > 0) U.column(10, progressLabel, U.progress(done, total)) else U.label("暂无计划", 11, U.faint)
+        return U.row(left,progress).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(17,0)); name="feature-${item.str("slug")}" }
     }
     fun selectFeature(slug:String) {
         selectedSlug=slug;selectedDocument=null;checkedFeatureRevision=null;verificationData=null;detailData=null;tasks=emptyList();files=emptyList();renderTasks()
@@ -512,7 +620,6 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         files = documentFiles(data)
         val completedCount = tasks.count { it.get("completed")?.asBoolean == true }
         val totalCount = tasks.size
-        val pct = if (totalCount > 0) (completedCount * 100 / totalCount) else 0
 
         // Line 1: Breadcrumb + Copy Prompt Button
         val breadcrumb = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
@@ -578,25 +685,19 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         // Line 3: Status capsules
         val leftCapsules = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
             isOpaque = false
-            val statusPill = JLabel("⬡ $status").apply {
+            val statusPill = JLabel(U.status(status)).apply {
                 font = font.deriveFont(Font.BOLD, 11f)
                 foreground = com.intellij.ui.JBColor(0x2563EB, 0x60A5FA)
+                toolTipText = status
                 border = BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(com.intellij.ui.JBColor(0x93C5FD, 0x1E3A8A), 1),
                     JBUI.Borders.empty(3, 8)
                 )
             }
-            val stagePill = JLabel("⑂ $currentStage").apply {
+            val stagePill = JLabel(U.stage(currentStage)).apply {
                 font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
                 foreground = U.muted
-                border = BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xE5E7EB, 0x374151), 1),
-                    JBUI.Borders.empty(3, 8)
-                )
-            }
-            val progressPill = JLabel("$completedCount/$totalCount 已完成 ($pct%)").apply {
-                font = font.deriveFont(11f)
-                foreground = U.muted
+                toolTipText = currentStage
                 border = BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xE5E7EB, 0x374151), 1),
                     JBUI.Borders.empty(3, 8)
@@ -604,7 +705,53 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             }
             add(statusPill)
             add(stagePill)
-            add(progressPill)
+
+            val planSummary = summary.get("planSummary").obj()
+            val completionPolicy = planSummary?.str("completionPolicy")
+            val trustedObj = planSummary?.get("trustedProgress").obj()
+            val isTrustedApplicable = trustedObj?.get("applicable")?.asBoolean == true
+            val trustedDone = if (isTrustedApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: completedCount else null
+            val untrustedCount = if (isTrustedApplicable && trustedDone != null && completedCount > trustedDone) completedCount - trustedDone else 0
+
+            if (completionPolicy == "task-evidence-v1") {
+                val policyPill = JLabel("凭据门禁").apply {
+                    font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
+                    foreground = com.intellij.ui.JBColor(0x047857, 0x10B981)
+                    toolTipText = "采用 task-evidence-v1 策略，任务需具备有效执行/验证凭据"
+                    border = BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xA7F3D0, 0x064E3B), 1),
+                        JBUI.Borders.empty(3, 8)
+                    )
+                }
+                add(policyPill)
+            }
+
+            if (untrustedCount > 0) {
+                val warningPill = JLabel("⚠ $untrustedCount 项缺凭据").apply {
+                    font = font.deriveFont(Font.BOLD, 11f)
+                    foreground = com.intellij.ui.JBColor(0xD97706, 0xF59E0B)
+                    toolTipText = "已标记完成 $completedCount 项，但其中 $untrustedCount 项缺乏有效凭据记录或未通过验证"
+                    border = BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xFDE68A, 0x78350F), 1),
+                        JBUI.Borders.empty(3, 8)
+                    )
+                }
+                add(warningPill)
+            }
+
+            val blockers = progression?.objects("blockers").orEmpty()
+            if (blockers.isNotEmpty()) {
+                val blockerPill = JLabel("⛔ ${blockers.size} 项阻塞").apply {
+                    font = font.deriveFont(Font.BOLD, 11f)
+                    foreground = com.intellij.ui.JBColor(0xDC2626, 0xEF4444)
+                    toolTipText = blockers.joinToString("\n") { it.str("message") ?: it.str("code") ?: "阻塞项" }
+                    border = BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xFECACA, 0x7F1D1D), 1),
+                        JBUI.Borders.empty(3, 8)
+                    )
+                }
+                add(blockerPill)
+            }
         }
 
         val line3 = JPanel(BorderLayout()).apply {
@@ -617,7 +764,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         featureHeader.add(line3)
         featureHeader.border = JBUI.Borders.empty(0, 0, 8, 0)
 
-        tabs.setTitleAt(PLAN, "任务拆解与执行 ${completedCount}/${totalCount}")
+        tabs.setTitleAt(PLAN, if (totalCount > 0) "计划 $completedCount/$totalCount" else "计划")
         renderTasks(); renderFeatureOverview(data); renderVerification()
         committedChanges.showFeature(data, repositories())
         changing = true; filePicker.removeAllItems(); files.filter { it.get("exists")?.asBoolean == true }.forEach { filePicker.addItem(it.str("path")) }; selectedDocument?.let { filePicker.selectedItem = it }; changing = false
@@ -668,11 +815,50 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     }
 
     private fun renderTasks() {
-        displayedTasks=tasks.filter { taskFilter.selectedIndex==0 || (it.get("completed")?.asBoolean==true)==(taskFilter.selectedIndex==2) }
-        planTitle.text="实施计划 · ${tasks.count { it.get("completed")?.asBoolean==true }}/${tasks.size} 项完成"
-        setRows(taskTable,displayedTasks.map { listOf(it.str("id")?:"未编号",if(it.get("completed")?.asBoolean==true) "✓ 已完成" else "○ 待完成",it.str("title"),it.get("dependencies").texts(),"${it.str("path")}:${it.str("startLine")}") })
+        displayedTasks = tasks.filter {
+            when (taskFilter.selectedIndex) {
+                1 -> it.get("completed")?.asBoolean != true
+                2 -> it.get("completed")?.asBoolean == true
+                3 -> it.get("completed")?.asBoolean == true && it.get("trusted")?.takeIf { p -> p.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull() == true
+                4 -> it.get("completed")?.asBoolean == true && it.get("trusted")?.takeIf { p -> p.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull() == false
+                else -> true
+            }
+        }
+        val planSummary = detailData?.get("summary").obj()?.get("planSummary").obj()
+        val trustedObj = planSummary?.get("trustedProgress").obj()
+        val isTrustedApplicable = trustedObj?.get("applicable")?.asBoolean == true
+        val trustedDone = if (isTrustedApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt else null
+
+        val totalCount = tasks.size
+        val completedCount = tasks.count { it.get("completed")?.asBoolean == true }
+        val progressDesc = if (isTrustedApplicable && trustedDone != null) {
+            "$completedCount/$totalCount 完成 (可信 $trustedDone)"
+        } else {
+            "$completedCount/$totalCount 项完成"
+        }
+        planTitle.text = "实施计划 · $progressDesc"
+
+        setRows(taskTable, displayedTasks.map {
+            val isDone = it.get("completed")?.asBoolean == true
+            val trusted = it.get("trusted")?.takeIf { p -> p.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull()
+            val statusStr = when {
+                isDone && trusted == true -> "✓ 可信"
+                isDone && trusted == false -> "⚠ 缺凭据"
+                isDone -> "✓ 已完成"
+                else -> "○ 待完成"
+            }
+            val kind = it.str("validationKind")
+            val titleDisplay = if (kind != null) "[$kind] ${it.str("title")}" else it.str("title")
+            listOf(
+                it.str("id") ?: "未编号",
+                statusStr,
+                titleDisplay,
+                it.get("dependencies").texts().ifBlank { "无" },
+                "${it.str("path")}:${it.str("startLine")}"
+            )
+        })
     }
-    private fun showDocument(path:String) { changing=true;tabs.selectedIndex=DOCUMENTS;filePicker.selectedItem=path;changing=false;openDocument(path) }
+    private fun showDocument(path: String, line: Int? = null) { changing = true; tabs.selectedIndex = DOCUMENTS; filePicker.selectedItem = path; changing = false; openDocument(path, line = line) }
     private fun locateTask(task:JsonObject) { val path=task.str("path")?:return;changing=true;tabs.selectedIndex=DOCUMENTS;filePicker.selectedItem=path;changing=false;openDocument(path,task.str("startLine")?.toIntOrNull(),taskKey=task.str("id")?:task.str("title")) }
     private fun openDocument(path: String, line: Int? = null, retried: Boolean = false, taskKey: String? = null, anchor: String? = null) {
         val slug = selectedSlug ?: return
@@ -779,6 +965,47 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             U.append(verificationBody,disclosure(title,evidence,expanded=true),8)
         }
         if(batch==null) U.append(verificationBody,U.empty("尚无验证记录","这里展示已有验证证据；工作台不会执行测试。"))
+        val taskEvidences = data?.objects("taskEvidence").orEmpty()
+        if (taskEvidences.isNotEmpty()) {
+            U.append(verificationBody, U.section("任务凭据矩阵 (Task Evidence)", U.label("针对实施计划各任务的独立验证与测试凭据", 11, U.faint)), 20)
+            taskEvidences.forEach { evidence ->
+                val taskId = evidence.str("taskId") ?: "—"
+                val trusted = evidence.get("trusted")?.takeIf { it.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull()
+                val source = evidence.get("source").obj()
+                val path = source?.str("path") ?: "testing/verification.md"
+                val startLine = source?.str("startLine")?.toIntOrNull()
+                val endLine = source?.str("endLine")?.toIntOrNull()
+                val rangeText = if (startLine != null && endLine != null) "$path:$startLine-$endLine" else path
+                val diags = evidence.objects("diagnostics")
+
+                val stateBadge = when (trusted) {
+                    true -> U.badge("✓ 凭据有效", U.green)
+                    false -> U.badge("⚠ 凭据异常/待补", U.amber)
+                    else -> U.badge("○ 未验证", U.faint)
+                }
+
+                val taskRow = U.row(
+                    U.column(4,
+                        U.row(U.label("任务 $taskId", 12, bold = true), stateBadge),
+                        U.mono(rangeText, U.muted)
+                    ),
+                    U.button("查看凭据原文") { showDocument(path, startLine) }
+                )
+                val content = if (diags.isNotEmpty()) {
+                    U.column(6,
+                        taskRow,
+                        *diags.map { diag ->
+                            U.label("• ${diag.str("message") ?: diag.str("code") ?: "诊断告警"}", 11, U.red)
+                        }.toTypedArray()
+                    )
+                } else {
+                    taskRow
+                }
+                U.append(verificationBody, content.apply {
+                    border = BorderFactory.createCompoundBorder(BottomLine(U.border), JBUI.Borders.empty(8, 0))
+                }, 6)
+            }
+        }
         U.append(verificationBody,U.section("各仓代码核对",U.label("记录的代码状态 → 当前现场",11,U.faint)),26)
         data?.objects("repositoryStates")?.forEach { repo ->
             val content=U.column(12,U.row(U.label(repo.str("repository").orEmpty(),13,bold=true),U.badge(U.state(repo.str("state")),U.stateColor(repo.str("state")))),U.copy(repo.get("reasonCodes").texts().ifBlank { if(repo.str("state")=="not_checked") "尚未核对当前工作目录" else "当前代码与批次记录一致" }),U.mono("HEAD ${repo.str("currentHead")?:"未记录"}"))
@@ -852,7 +1079,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private fun showRunDetail() {
         val record=runData?:return
         globalRuns.removeAll();U.append(globalRuns,pageHeader(record.str("id").orEmpty(),"来源：${record.str("source")}",U.button("← 所有流程记录") { queryWorkflow() }))
-        record.objects("records").forEach { step -> U.append(globalRuns,disclosure(U.row(U.label(step.str("stage").orEmpty(),13,bold=true),U.badge(U.state(step.str("status")),U.stateColor(step.str("status")))),U.column(10,*listOfNotNull(U.copy(step.str("summary").orEmpty()),U.label("配置：${U.state(step.get("configurationMatch").obj()?.str("state"))}",11,U.muted),step.get("configurationMatch").obj()?.get("reasonCodes").texts().takeIf(String::isNotBlank)?.let { U.mono("原因码：$it") },U.mono(step.str("updatedAt").orEmpty())).toTypedArray())),18) }
+        record.objects("records").forEach { step -> U.append(globalRuns,disclosure(U.row(U.label(step.str("stage").orEmpty(),13,bold=true),U.badge(U.state(step.str("status")),U.stateColor(step.str("status")))),U.column(10,*listOfNotNull<JComponent>(U.copy(step.str("summary").orEmpty()),U.label("配置：${U.state(step.get("configurationMatch").obj()?.str("state"))}",11,U.muted),step.get("configurationMatch").obj()?.get("reasonCodes").texts().takeIf(String::isNotBlank)?.let { U.mono("原因码：$it") },U.mono(step.str("updatedAt").orEmpty())).toTypedArray())),18) }
         U.append(globalRuns,disclosure(U.label("Run 原始记录",13),U.copy(com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(record.get("rawRecord")))) ,20)
         globalRuns.revalidate();globalRuns.repaint()
     }
@@ -902,7 +1129,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private fun reload() {
         if(disposed) return
         scanService.refresh(repositories())
-        state.kitRoot?.let { root -> state.python?.let { python -> service.bind(root,python) { refresh();loadVisible() } } }
+        state.kitRoot?.let { root -> state.python?.let { python -> service.bind(root,python) { refresh() } } }
         if(route=="feature") restoreFeature()
     }
     private fun remember() { if(!changing) state.kitRoot?.let { settings.preference(it).apply { query=search.text;status=lifecycle.selectedItem.toString();tab=tabs.selectedIndex;feature=selectedSlug.orEmpty();document=selectedDocument.orEmpty();run=runPicker.selectedItem?.toString().orEmpty() } } }
@@ -943,6 +1170,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         val python = state.python ?: return
         if (runningDoctor || (doctorRan && !force)) return
         runningDoctor = true; doctorRan = true
+        updateFeatureDoctor("环境检查中…", U.muted, AllIcons.General.Information)
         doctorBody.removeAll(); U.append(doctorBody, U.copy("正在运行 doctor 检查…")); doctorBody.revalidate(); doctorBody.repaint()
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = KitClient(Path.of(python), Path.of(root)).tool("doctor", listOf("--root", root, "--json"))
@@ -956,11 +1184,12 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private fun renderDoctor(result: Result<String>) {
         doctorBody.removeAll()
         overviewDoctorBanner.removeAll()
+        overviewDoctorBanner.isVisible = false
         result.fold({ text ->
             val parsed = runCatching { com.google.gson.JsonParser.parseString(text).asJsonObject }.getOrNull()
             if (parsed == null) {
                 U.append(doctorBody, U.copy("doctor 输出不可解析，请在终端直接运行 kit doctor 查看。"))
-                overviewDoctorBanner.isVisible = false
+                updateFeatureDoctor("环境状态不可用", U.amber, AllIcons.General.Warning)
             } else {
                 val summary = parsed.get("summary").obj()
                 val errors = summary?.str("errors")?.toIntOrNull() ?: 0
@@ -970,24 +1199,14 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                 val findings = parsed.objects("findings")
                 if (findings.isEmpty()) {
                     U.append(doctorBody, U.label("✓ 未发现问题", 12, U.green), 12)
-                    overviewDoctorBanner.apply {
-                        background = com.intellij.ui.JBColor(0xEEF8F1, 0x1C2B21)
-                        border = BorderFactory.createCompoundBorder(
-                            BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xC2E7CD, 0x2A4533), 1),
-                            JBUI.Borders.empty(8, 14)
-                        )
-                        add(javax.swing.JLabel("工作区环境健康（0 错误 · 0 警告）", AllIcons.General.InspectionsOK, javax.swing.JLabel.LEFT), BorderLayout.WEST)
-                        add(U.button("查看详情", true) { navigate("diagnostics") }.apply {
-                            font = font.deriveFont(11f)
-                        }, BorderLayout.EAST)
-                        isVisible = true
-                    }
+                    updateFeatureDoctor("环境正常", U.green, AllIcons.General.InspectionsOK)
                 } else {
                     val hasError = errors > 0
                     val bannerIcon = if (hasError) AllIcons.General.Error else AllIcons.General.Warning
                     val bannerBg = if (hasError) com.intellij.ui.JBColor(0xFDF2F2, 0x362224) else com.intellij.ui.JBColor(0xFFFBEB, 0x382F19)
                     val bannerBorderColor = if (hasError) com.intellij.ui.JBColor(0xF8B4B4, 0x5C2B2F) else com.intellij.ui.JBColor(0xFCE96A, 0x614F18)
                     val bannerText = if (hasError) "工作区存在 $errors 项异常问题需处理" else "工作区存在 $warnings 项警告建议优化"
+                    updateFeatureDoctor(if (hasError) "$errors 项环境异常" else "$warnings 项环境警告", if (hasError) U.red else U.amber, bannerIcon)
                     overviewDoctorBanner.apply {
                         background = bannerBg
                         border = BorderFactory.createCompoundBorder(
@@ -1011,10 +1230,16 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             }
         }, { failure ->
             U.append(doctorBody, U.copy("doctor 运行失败：${failure.message}"))
-            overviewDoctorBanner.isVisible = false
+            updateFeatureDoctor("环境检查失败", U.amber, AllIcons.General.Warning)
         })
         doctorBody.revalidate(); doctorBody.repaint()
         overviewDoctorBanner.revalidate(); overviewDoctorBanner.repaint()
+    }
+
+    private fun updateFeatureDoctor(value: String, color: Color, icon: Icon) {
+        featureDoctorLabel.text = value
+        featureDoctorLabel.foreground = color
+        featureDoctorLabel.icon = icon
     }
 
     private fun runDescribe() {
@@ -1047,7 +1272,18 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     }
 
     private fun pageHeader(title:String,subtitle:String,actions:JComponent?=null) = U.column(10,U.row(U.label(title,23,bold=true),actions),U.label(subtitle,11,U.muted))
-    private fun clickableMetric(caption:String,value:String,sub:String,color:Color=U.text,action:()->Unit) = U.column(8,U.label(caption,11,U.muted),U.label(value,26,color,true),U.button(sub,true,action).apply { horizontalAlignment=SwingConstants.LEFT;border=JBUI.Borders.empty();font=U.label("",10).font })
+    private fun clickableMetric(caption:String,value:String,sub:String,color:Color=U.text,tooltip:String?=null,action:()->Unit) = U.column(8,U.label(caption,11,U.muted),U.label(value,26,color,true),U.button(sub,true,action).apply { horizontalAlignment=SwingConstants.LEFT;border=JBUI.Borders.empty();font=U.label("",10).font }).apply {
+        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(e)) action()
+            }
+        })
+        if (tooltip != null) {
+            toolTipText = tooltip
+            components.forEach { (it as? JComponent)?.toolTipText = tooltip }
+        }
+    }
     private fun disclosure(title:JComponent,content:JComponent,expanded:Boolean=false):JPanel = U.column().apply {
         val wrapper=U.padded(content,16,22,14,12).apply { isVisible=expanded }
         val toggle=U.button("",true) {}

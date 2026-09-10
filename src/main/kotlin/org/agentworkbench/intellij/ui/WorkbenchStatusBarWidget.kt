@@ -63,9 +63,14 @@ internal class WorkbenchStatusBarWidget(private val project: Project) : CustomSt
             val plan = snapshot.detail?.data?.asJsonObject?.getAsJsonObject("summary")?.getAsJsonObject("planSummary")
             val text = when {
                 featureSlug != null && plan != null -> {
-                    val comp = plan.get("completed")?.asInt ?: 0
-                    val total = plan.get("total")?.asInt ?: 0
-                    "$featureSlug ($comp/$total)"
+                    val comp = plan.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
+                    val total = plan.get("total")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
+                    val trustedObj = plan.getAsJsonObject("trustedProgress")
+                    val isApplicable = trustedObj?.get("applicable")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+                    val trustedDone = if (isApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: comp else comp
+                    val untrusted = if (isApplicable && comp > trustedDone) comp - trustedDone else 0
+                    val progressPart = if (untrusted > 0) "$comp/$total ⚠$untrusted" else "$comp/$total"
+                    "$featureSlug ($progressPart)"
                 }
                 featureSlug != null -> featureSlug
                 snapshot.kitRoot != null -> "Workbench 活跃"
@@ -73,6 +78,16 @@ internal class WorkbenchStatusBarWidget(private val project: Project) : CustomSt
             }
             label.text = text
             label.toolTipText = when {
+                featureSlug != null && plan != null -> {
+                    val comp = plan.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
+                    val total = plan.get("total")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
+                    val trustedObj = plan.getAsJsonObject("trustedProgress")
+                    val isApplicable = trustedObj?.get("applicable")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+                    val trustedDone = if (isApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: comp else comp
+                    val untrusted = if (isApplicable && comp > trustedDone) comp - trustedDone else 0
+                    val untrustedNote = if (untrusted > 0) " (其中 $untrusted 项缺乏有效凭据)" else ""
+                    "Agent Workbench 当前需求：$featureSlug [进度 $comp/$total$untrustedNote] (点击切换或查看)"
+                }
                 featureSlug != null -> "Agent Workbench 当前需求：$featureSlug (点击切换或查看)"
                 snapshot.kitRoot != null -> "Agent Workbench 活跃工作区：${snapshot.kitRoot}"
                 else -> "Agent Workbench：点击打开工作台"

@@ -1,5 +1,6 @@
 package org.agentworkbench.intellij.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressIndicator
@@ -27,7 +28,41 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
     private val model = object : DefaultTableModel(arrayOf("仓库", "当前分支", "工作目录", "远程同步", "最近提交"), 0) {
         override fun isCellEditable(row:Int,column:Int)=false
     }
-    private val table = JBTable(model)
+    private val table: JBTable = object : JBTable(model) {
+        override fun getToolTipText(e: MouseEvent): String? {
+            val row = rowAtPoint(e.point).takeIf { it >= 0 } ?: return null
+            val col = columnAtPoint(e.point).takeIf { it >= 0 } ?: return null
+            val modelRow = convertRowIndexToModel(row).takeIf { it in 0 until visibleEntries.size } ?: return null
+            val entry = visibleEntries[modelRow]
+            val scene = entry.scene as? NativeGit.Snapshot.Available ?: return null
+            return when (col) {
+                2 -> {
+                    when {
+                        scene.conflicts -> "<html><font color='red'><b>存在未解决冲突</b></font><br/>双击或右键「解决冲突」进入三方合并器</html>"
+                        scene.changes > 0 && scene.dirtyFiles.isNotEmpty() -> {
+                            buildString {
+                                append("<html><b>工作目录变更 (${scene.changes} 个文件):</b><br/>")
+                                scene.dirtyFiles.take(8).forEach { f ->
+                                    val esc = com.intellij.openapi.util.text.StringUtil.escapeXmlEntities(f)
+                                    append("• ").append(esc).append("<br/>")
+                                }
+                                if (scene.changes > 8) append("<i>...等共 ${scene.changes} 个文件 (双击查看 Diff)</i>")
+                                else append("<i>(双击查看 Diff)</i>")
+                                append("</html>")
+                            }
+                        }
+                        else -> "工作目录干净 (双击查看 Log)"
+                    }
+                }
+                3 -> {
+                    if ((scene.ahead ?: 0) > 0 || (scene.behind ?: 0) > 0) {
+                        "<html><b>远程同步状态:</b><br/>• 超前本地提交: ${scene.ahead ?: 0} 个 (可点击 Push)<br/>• 落后远端提交: ${scene.behind ?: 0} 个 (可点击 Pull)</html>"
+                    } else "已与远端完全同步"
+                }
+                else -> null
+            }
+        }
+    }
     private val status = JBLabel("按工作区配置显示仓库；双击查看 Log，右键执行 Git 操作。")
     private val search = SearchTextField(false)
     private var entries = emptyList<GitScanService.Scan>()
@@ -38,6 +73,13 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
     private val nativeRetry = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private val scope = JComboBox(arrayOf("全部", "有变更", "需关注", "当前需求相关"))
     private var related=emptySet<String>()
+    private val logAction = gitAction("Log", AllIcons.Vcs.History) { single()?.let { connectAndOpen(it, "Vcs.Show.Log") } }
+    private val diffAction = gitAction("Diff", AllIcons.Actions.Diff) { single()?.let { connectAndOpen(it, "ChangesView.Diff") } }
+    private val commitAction = gitAction("Commit", AllIcons.Vcs.CommitNode) { single()?.let { connectAndOpen(it, "CheckinProject") } }
+    private val pushAction = gitAction("Push…", AllIcons.Actions.Upload) { single()?.let { connectAndOpen(it, "Vcs.Push") } }
+    private val pullAction = gitAction("Pull…", AllIcons.Actions.CheckOut) { single()?.let { connectAndOpen(it, "Git.Pull") } }
+    private val branchesAction = gitAction("Branches", AllIcons.Vcs.Branch) { single()?.let { connectAndOpen(it, "Git.Branches") } }
+    private val fetchAction = gitAction("Fetch", AllIcons.Actions.Download) { fetch(selected()) }
     init {
         background = WorkbenchUi.bg
         WorkbenchUi.table(table)
@@ -68,11 +110,23 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
         add(WorkbenchUi.row(WorkbenchUi.label("仓库",14,bold=true),WorkbenchUi.flow(scope,search)).apply { border=com.intellij.util.ui.JBUI.Borders.empty(0,0,12,0) }, BorderLayout.NORTH)
         WorkbenchUi.combo(scope);status.foreground=WorkbenchUi.muted
         add(WorkbenchUi.scroll(table))
-        add(WorkbenchUi.padded(status,8,0,0,0), BorderLayout.SOUTH)
+        add(WorkbenchUi.column(6,
+            WorkbenchUi.flow(logAction,diffAction,commitAction,pushAction,pullAction,branchesAction,fetchAction).apply { border=com.intellij.util.ui.JBUI.Borders.emptyTop(8) },
+            WorkbenchUi.padded(status,2,0,0,0)
+        ), BorderLayout.SOUTH)
         search.accessibleContext.accessibleName = "筛选 Git 仓库"
         scope.addActionListener { render() }
         table.addMouseListener(object:java.awt.event.MouseAdapter(){
-            override fun mouseClicked(e:MouseEvent){ if(e.clickCount==2&&SwingUtilities.isLeftMouseButton(e)) entryAt(e)?.let { connectAndOpen(it,"Vcs.Show.Log") } }
+            override fun mouseClicked(e:MouseEvent){
+                if(e.clickCount==2&&SwingUtilities.isLeftMouseButton(e)) entryAt(e)?.let { entry ->
+                    val scene = entry.scene as? NativeGit.Snapshot.Available
+                    when {
+                        scene?.conflicts == true -> connectAndOpen(entry, "Git.ResolveConflicts")
+                        (scene?.changes ?: 0) > 0 -> connectAndOpen(entry, "ChangesView.Diff")
+                        else -> connectAndOpen(entry, "Vcs.Show.Log")
+                    }
+                }
+            }
             override fun mousePressed(e:MouseEvent)=maybePopup(e)
             override fun mouseReleased(e:MouseEvent)=maybePopup(e)
         })
@@ -87,14 +141,40 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
         entries = scanService.scans()
         render()
     }
+    private var lastRenderFingerprint: String? = null
+
     private fun render() {
         val selectedPaths = selected().map { it.root }.toSet()
+        table.emptyText.text = when (scope.selectedIndex) {
+            1 -> "暂无有变更的仓库"
+            2 -> "所有仓库均正常，无冲突或异常"
+            3 -> "暂无关联仓库"
+            else -> "暂无仓库"
+        }
         visibleEntries = entries.filter { entry -> entry.id.contains(search.text.trim(), true) && when(scope.selectedIndex) {
             1 -> (entry.scene as? NativeGit.Snapshot.Available)?.changes?.let { it>0 }==true
             2 -> entry.availability!="present" || entry.scene is NativeGit.Snapshot.Unavailable || (entry.scene as? NativeGit.Snapshot.Available)?.conflicts==true
             3 -> entry.id in related
             else -> true
         } }
+
+        val currentFingerprint = buildString {
+            append(scope.selectedIndex).append(';')
+            append(search.text.trim()).append(';')
+            visibleEntries.forEach { e ->
+                val s = e.scene as? NativeGit.Snapshot.Available
+                append(e.id).append(':').append(s?.branch).append(':').append(s?.changes).append(':').append(s?.ahead).append(':').append(s?.behind).append(':').append(e.lastCommit).append(';')
+            }
+        }
+        if (currentFingerprint == lastRenderFingerprint && model.rowCount == visibleEntries.size) {
+            updateStatus()
+            return
+        }
+        lastRenderFingerprint = currentFingerprint
+
+        val tableScroll = table.parent as? JViewport
+        val savedScroll = tableScroll?.viewPosition
+
         model.rowCount = 0
         visibleEntries.forEachIndexed { index, entry ->
             val scene = entry.scene as? NativeGit.Snapshot.Available
@@ -105,10 +185,34 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
             model.addRow(arrayOf<Any>(entry.id,scene?.branch ?: if (reading) "…" else "—",work,sync,time))
             if (entry.root in selectedPaths) { val view=table.convertRowIndexToView(index); table.addRowSelectionInterval(view, view) }
         }
+        if (savedScroll != null) {
+            SwingUtilities.invokeLater { tableScroll?.viewPosition = savedScroll }
+        }
         updateStatus()
     }
     private fun updateStatus() {
-        status.text = if (scanning) "正在读取 ${entries.size} 个仓库的 Git 现场…" else "可见 ${visibleEntries.size} 个仓库；选中 ${table.selectedRowCount} 个。双击查看 Log，右键执行 Git 操作。"
+        val selectedCount = table.selectedRowCount
+        listOf(logAction, diffAction, commitAction, pushAction, pullAction, branchesAction).forEach { it.isEnabled = !scanning && selectedCount == 1 }
+        fetchAction.isEnabled = !scanning && selectedCount > 0
+        fetchAction.text = if (selectedCount > 1) "Fetch $selectedCount" else "Fetch"
+        val singleEntry = if (selectedCount == 1) selected().singleOrNull() else null
+        val scene = singleEntry?.scene as? NativeGit.Snapshot.Available
+        val hint = when {
+            scene?.conflicts == true -> "检测到冲突：双击或右键「解决冲突」进入合并器。"
+            (scene?.changes ?: 0) > 0 -> "双击查看 Diff，右键可 Push/Pull/定位目录。"
+            else -> "双击查看 Log，右键可 Push/Pull/定位目录。"
+        }
+        status.text = if (scanning) {
+            "正在读取 ${entries.size} 个仓库的 Git 现场…"
+        } else if (scope.selectedIndex == 2 && visibleEntries.isEmpty()) {
+            "所有仓库 Git 现场均正常（无冲突或目录不可用）。若全局指标有需关注项，请查看下方「当前关注」列表。"
+        } else {
+            "可见 ${visibleEntries.size} 个仓库；选中 $selectedCount 个。$hint"
+        }
+    }
+    private fun gitAction(text: String, icon: Icon, action: () -> Unit) = WorkbenchUi.button(text, action = action).apply {
+        this.icon = icon
+        toolTipText = text
     }
     fun filter(value: String) { scope.selectedIndex=when(value){"changed"->1;"attention"->2;"related"->3;else->0} }
     fun setRelated(ids:Set<String>) { related=ids;if(scope.selectedIndex==3) render() }
@@ -131,9 +235,20 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
         fun item(label: String, action: () -> Unit) { menu.add(JMenuItem(label).apply { addActionListener { action() } }) }
         item("Log") { single()?.let { connectAndOpen(it, "Vcs.Show.Log") } }
         item("Diff") { single()?.let { connectAndOpen(it, "ChangesView.Diff") } }
-        item("Commit") { single()?.let { connectAndOpen(it, "CheckinProject") } }
-        item("Branches") { single()?.let { connectAndOpen(it, "Git.Branches") } }
-        item("解决冲突") { single()?.let { connectAndOpen(it, "Git.ResolveConflicts") } }
+        item("Commit…") { single()?.let { connectAndOpen(it, "CheckinProject") } }
+        item("Push…") { single()?.let { connectAndOpen(it, "Vcs.Push") } }
+        item("Pull…") { single()?.let { connectAndOpen(it, "Git.Pull") } }
+        item("Branches…") { single()?.let { connectAndOpen(it, "Git.Branches") } }
+        if (selected().any { (it.scene as? NativeGit.Snapshot.Available)?.conflicts == true }) {
+            item("解决冲突…") { single()?.let { connectAndOpen(it, "Git.ResolveConflicts") } }
+        }
+        menu.addSeparator()
+        item("在工程树中定位 (Select in Project View)") {
+            single()?.let { host.selectInProjectView(it.root).onFailure { err -> status.text = err.message } }
+        }
+        item("在此处打开终端 (Open in Terminal)") {
+            single()?.let { host.openInTerminal(it.root).onFailure { err -> status.text = err.message } }
+        }
         menu.addSeparator()
         val chosen = selected()
         item(if (chosen.size > 1) "Fetch ${chosen.size} 个仓库" else "Fetch 此仓库") { fetch(selected()) }

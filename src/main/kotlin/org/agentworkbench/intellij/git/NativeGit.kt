@@ -17,7 +17,8 @@ internal class NativeGit(private val executable: String = "git") {
         val divergence = upstream?.let { read(root, "rev-list", "--left-right", "--count", "HEAD...$it").trim().split(Regex("\\s+")) }
         val ahead = divergence?.getOrNull(0)?.toIntOrNull()
         val behind = divergence?.getOrNull(1)?.toIntOrNull()
-        Snapshot.Available(branch, status.size, status.any { it.take(2) in CONFLICT_CODES }, upstream, ahead, behind)
+        val dirty = status.map(String::trim)
+        Snapshot.Available(branch, status.size, status.any { it.take(2) in CONFLICT_CODES }, upstream, ahead, behind, dirtyFiles = dirty.take(15))
     }.getOrElse { Snapshot.Unavailable(it.message ?: "Git 现场不可读取") }
     fun remotes(root: File): List<String> = runCatching { requireRepositoryRoot(root); read(root, "remote").lines().filter(String::isNotBlank) }.getOrDefault(emptyList())
     fun lastCommitTime(root:File):String? = runCatching { requireRepositoryRoot(root);read(root,"log","-1","--format=%cI").trim().takeIf(String::isNotEmpty) }.getOrNull()
@@ -125,7 +126,7 @@ internal class NativeGit(private val executable: String = "git") {
     }
 
     sealed interface Snapshot {
-        data class Available(val branch: String, val changes: Int, val conflicts: Boolean, val upstream: String?, val ahead: Int?, val behind: Int?) : Snapshot
+        data class Available(val branch: String, val changes: Int, val conflicts: Boolean, val upstream: String?, val ahead: Int?, val behind: Int?, val dirtyFiles: List<String> = emptyList()) : Snapshot
         data class Unavailable(val reason: String) : Snapshot
     }
 

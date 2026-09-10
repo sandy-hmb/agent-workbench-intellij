@@ -117,9 +117,49 @@ internal class HostGit(private val project: Project) {
                 val action = ActionManager.getInstance().getAction(actionId) ?: error("宿主未提供分支管理")
                 ActionUtil.performAction(action, AnActionEvent.createEvent(context, null, "AgentWorkbench", ActionUiKind.NONE, null))
             }
+            "Vcs.Push", "CheckinProject.Push" -> {
+                val context = branchContext(file)
+                val action = ActionManager.getInstance().getAction("Vcs.Push")
+                    ?: ActionManager.getInstance().getAction("CheckinProject.Push")
+                    ?: error("宿主未提供推送管理")
+                ActionUtil.performAction(action, AnActionEvent.createEvent(context, null, "AgentWorkbench", ActionUiKind.NONE, null))
+            }
+            "Git.Pull", "Vcs.UpdateProject" -> {
+                val context = branchContext(file)
+                val action = ActionManager.getInstance().getAction("Git.Pull")
+                    ?: ActionManager.getInstance().getAction("Vcs.UpdateProject")
+                    ?: error("宿主未提供拉取管理")
+                ActionUtil.performAction(action, AnActionEvent.createEvent(context, null, "AgentWorkbench", ActionUiKind.NONE, null))
+            }
             else -> error("不支持的宿主 Git 操作")
         }
         Unit
+    }
+
+    fun selectInProjectView(root: Path): Result<Unit> = runCatching {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val file = rootFile(root) ?: error("无法定位仓库目录: $root")
+        com.intellij.ide.projectView.ProjectView.getInstance(project).select(null, file, true)
+    }
+
+    fun openInTerminal(root: Path): Result<Unit> = runCatching {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val file = rootFile(root) ?: error("无法定位仓库目录: $root")
+        val terminalViewClass = runCatching { Class.forName("org.jetbrains.plugins.terminal.TerminalView") }.getOrNull()
+        if (terminalViewClass != null) {
+            val getInstanceMethod = terminalViewClass.getMethod("getInstance", Project::class.java)
+            val instance = getInstanceMethod.invoke(null, project)
+            val openMethod = terminalViewClass.getMethod("openTerminalIn", VirtualFile::class.java)
+            openMethod.invoke(instance, file)
+        } else {
+            val action = ActionManager.getInstance().getAction("ActivateTerminalToolWindow")
+            if (action != null) {
+                val context = branchContext(file)
+                ActionUtil.performAction(action, AnActionEvent.createEvent(context, null, "AgentWorkbench", ActionUiKind.NONE, null))
+            } else {
+                error("宿主未提供内置终端")
+            }
+        }
     }
 
     fun showCommittedDiff(root: Path, baseOrWorkRef: String, compareRef: String): Result<Unit> = runCatching {
