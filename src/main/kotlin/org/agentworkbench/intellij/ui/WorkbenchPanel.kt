@@ -95,9 +95,25 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private val planTitle = U.label("计划", 14, bold = true)
     private val taskTable = table("编号", "完成", "任务", "依赖", "原文位置")
     private val taskFilter = JComboBox(arrayOf("全部任务", "待完成", "已完成", "可信已完成", "缺凭据/待核验"))
-    private val filePicker = JComboBox<String>()
-    private val documentStatus = U.label("选择需求文档", 10, U.muted)
     private val reader = DocumentReader(project, ::openLink)
+    private val docPanel = DocumentTreePanel(
+        project = project,
+        reader = reader,
+        onDocumentSelected = { path ->
+            if (!changing) {
+                selectedDocument = path
+                openDocument(path)
+            }
+        },
+        onOpenInEditor = { path ->
+            selectedSlug?.let { slug ->
+                val line = reader.currentLine()
+                WorkbenchNavigation.openFeatureInEditor(project, slug, path, line)
+            }
+        }
+    )
+    private val documentStatus: JLabel
+        get() = docPanel.documentStatus
     private val verificationBody = U.column()
     private val workflowBody = U.column()
     private val globalRuns = U.column()
@@ -209,7 +225,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         search.textEditor.emptyText.text = "搜索需求名称或标识..."
         search.textEditor.accessibleContext.accessibleName = "搜索需求"
         search.preferredSize = Dimension(JBUI.scale(220), JBUI.scale(32))
-        listOf(lifecycle,repoFilter,sort,taskFilter,filePicker,runPicker).forEach(U::combo)
+        listOf(lifecycle,repoFilter,sort,taskFilter,runPicker).forEach(U::combo)
         U.append(featuresPage, tools); U.append(featuresPage, featureCount)
         featureList.background = U.bg
         featureList.selectionBackground = U.selection
@@ -276,18 +292,11 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         pages.add(U.page(U.padded(featuresPage) as JPanel), "features")
 
         tabs.addTab("概览", featureDashboard)
-        filePicker.preferredSize = Dimension(JBUI.scale(320), JBUI.scale(30))
-        val openInEditorBtn = U.button("在编辑器中打开", true) {
-            val slug = selectedSlug ?: return@button
-            val doc = selectedDocument ?: "README.md"
-            WorkbenchNavigation.openFeatureInEditor(project, slug, doc)
-        }.apply { icon = AllIcons.General.OpenInToolWindow; toolTipText = "在 IDEA 主编辑器 Tab 中打开此文档，支持原生预览与快捷键" }
         val locateTaskBtn = U.button("定位所选任务原文", action = ::locateTask).apply { toolTipText = "在内置阅读器中查看任务定义" }
         val openTaskInEditorBtn = U.button("在编辑器中打开任务", true) {
             val task = taskSelected() ?: return@button
             locateTaskInEditor(task)
         }.apply { icon = AllIcons.General.OpenInToolWindow; toolTipText = "在主编辑器中打开 implementation.md 并跳转到该任务定义行" }
-        val docPanel = U.panel().apply { add(U.row(U.flow(filePicker, openInEditorBtn), documentStatus).apply { border = JBUI.Borders.empty(16,0) }, BorderLayout.NORTH); add(reader) }
         val planPanel = U.panel().apply {
             add(U.row(planTitle, U.flow(taskFilter, locateTaskBtn, openTaskInEditorBtn)).apply { border = JBUI.Borders.empty(24,0,16,0) }, BorderLayout.NORTH)
             add(U.scroll(taskTable))
@@ -345,7 +354,6 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                 }
             }
         })
-        filePicker.addActionListener { if (!changing) filePicker.selectedItem?.toString()?.let { openDocument(it) } }
         runPicker.addActionListener { if (!changing) { loadRun(); remember() } }
         reader.onPosition = { line -> state.kitRoot?.let { root -> selectedDocument?.let { path -> documentRevision?.let { revision -> settings.rememberPosition(root, "$selectedSlug:$path:$revision", line) } } } }
         listOf(reader, committedChanges, git, repositoryGit, workingGit).forEach { Disposer.register(this, it) }
@@ -767,7 +775,10 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         tabs.setTitleAt(PLAN, if (totalCount > 0) "计划 $completedCount/$totalCount" else "计划")
         renderTasks(); renderFeatureOverview(data); renderVerification()
         committedChanges.showFeature(data, repositories())
-        changing = true; filePicker.removeAllItems(); files.filter { it.get("exists")?.asBoolean == true }.forEach { filePicker.addItem(it.str("path")) }; selectedDocument?.let { filePicker.selectedItem = it }; changing = false
+        changing = true
+        docPanel.setDocuments(files, data.get("documentReviews").obj())
+        selectedDocument = docPanel.activePath ?: selectedDocument ?: files.firstOrNull()?.str("path")
+        changing = false
         featureHeader.revalidate(); featureHeader.repaint(); editorTitle.text = title; loadVisible()
     }
 
@@ -858,14 +869,30 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             )
         })
     }
-    private fun showDocument(path: String, line: Int? = null) { changing = true; tabs.selectedIndex = DOCUMENTS; filePicker.selectedItem = path; changing = false; openDocument(path, line = line) }
-    private fun locateTask(task:JsonObject) { val path=task.str("path")?:return;changing=true;tabs.selectedIndex=DOCUMENTS;filePicker.selectedItem=path;changing=false;openDocument(path,task.str("startLine")?.toIntOrNull(),taskKey=task.str("id")?:task.str("title")) }
+    private fun showDocument(path: String, line: Int? = null) {
+        changing = true
+        tabs.selectedIndex = DOCUMENTS
+        selectedDocument = path
+        docPanel.selectDocument(path, fireEvent = false)
+        changing = false
+        openDocument(path, line = line)
+    }
+    private fun locateTask(task: JsonObject) {
+        val path = task.str("path") ?: return
+        changing = true
+        tabs.selectedIndex = DOCUMENTS
+        selectedDocument = path
+        docPanel.selectDocument(path, fireEvent = false)
+        changing = false
+        openDocument(path, task.str("startLine")?.toIntOrNull(), taskKey = task.str("id") ?: task.str("title"))
+    }
     private fun openDocument(path: String, line: Int? = null, retried: Boolean = false, taskKey: String? = null, anchor: String? = null) {
         val slug = selectedSlug ?: return
         val metadata = files.firstOrNull { it.str("path") == path } ?: return
         val revision = metadata.str("revision")
         selectedDocument = path
         remember()
+        docPanel.selectDocument(path, fireEvent = false)
         documentStatus.text = "正在读取 $path"
         service.loadDocument(slug, path, revision) { updated ->
             if (disposed || selectedSlug != slug || selectedDocument != path) return@loadDocument
@@ -934,7 +961,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             return
         }
         if (files.none { it.str("path") == path }) { documentStatus.text = "此链接不在当前需求文档集合：$target"; return }
-        changing = true; filePicker.selectedItem = path; changing = false
+        changing = true; docPanel.selectDocument(path, fireEvent = false); changing = false
         openDocument(path, anchor = uri.fragment)
     }
 
@@ -1119,7 +1146,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             "runs" -> { showWorkflowLoading(); queryWorkflow() }
             "extensions" -> { showWorkflowLoading(); queryWorkflow(); runDescribe() }
             "diagnostics" -> runDoctor()
-            "feature" -> when(tabs.selectedIndex) { DOCUMENTS -> filePicker.selectedItem?.toString()?.let { openDocument(it) };VERIFY -> queryVerification();WORKFLOW -> { showWorkflowLoading(); queryWorkflow() } }
+            "feature" -> when(tabs.selectedIndex) { DOCUMENTS -> (selectedDocument ?: docPanel.activePath)?.let { openDocument(it) };VERIFY -> queryVerification();WORKFLOW -> { showWorkflowLoading(); queryWorkflow() } }
         }
     }
     private fun showWorkflowLoading() {

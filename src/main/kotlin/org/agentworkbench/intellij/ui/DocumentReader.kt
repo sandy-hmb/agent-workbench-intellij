@@ -136,6 +136,8 @@ internal class DocumentReader(private val project: Project, private val link: (S
         if (line != null) goToLine(line)
     }
 
+    fun currentLine(): Int = if (!disposed) editor.caretModel.logicalPosition.line + 1 else 1
+
     fun goToAnchor(anchor: String): Boolean = anchors[anchor]?.let { goToLine(it); true } ?: false
 
     fun goToLine(line: Int) {

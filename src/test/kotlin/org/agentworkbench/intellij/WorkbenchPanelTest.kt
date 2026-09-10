@@ -51,6 +51,42 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         assertEquals("3 / 5 项 (可信 2) (60%)", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5, percentage = true, trustedCompleted = 2))
     }
 
+    fun testDocumentTreePanelCategorizationAndSelection() {
+        val reader = org.agentworkbench.intellij.ui.DocumentReader(project) {}
+        try {
+            var selectedPath: String? = null
+            val treePanel = org.agentworkbench.intellij.ui.DocumentTreePanel(
+                project = project,
+                reader = reader,
+                onDocumentSelected = { selectedPath = it },
+                onOpenInEditor = {}
+            )
+
+            val files = listOf(
+                com.google.gson.JsonObject().apply { addProperty("path", "requirements/requirements.md"); addProperty("exists", true) },
+                com.google.gson.JsonObject().apply { addProperty("path", "requirements/jira-PD-1968.md"); addProperty("exists", true) },
+                com.google.gson.JsonObject().apply { addProperty("path", "design/design.md"); addProperty("exists", true) },
+                com.google.gson.JsonObject().apply { addProperty("path", "README.md"); addProperty("exists", true) }
+            )
+            val reviews = com.google.gson.JsonObject().apply {
+                addProperty("requirements", "已批准")
+                addProperty("design", "待审阅")
+            }
+
+            treePanel.setDocuments(files, reviews)
+
+            // Verify initial selection selects first core document
+            assertEquals("requirements/requirements.md", treePanel.activePath)
+
+            // Select Jira requirements document
+            treePanel.selectDocument("requirements/jira-PD-1968.md")
+            assertEquals("requirements/jira-PD-1968.md", treePanel.activePath)
+            assertEquals("requirements/jira-PD-1968.md", selectedPath)
+        } finally {
+            com.intellij.openapi.util.Disposer.dispose(reader)
+        }
+    }
+
     private fun descendants(component: Component): List<Component> = listOf(component) +
         if (component is Container) component.components.flatMap(::descendants) else emptyList()
 }
