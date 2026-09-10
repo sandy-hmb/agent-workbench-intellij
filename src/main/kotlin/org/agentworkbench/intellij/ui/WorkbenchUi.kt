@@ -17,7 +17,6 @@ import javax.swing.table.DefaultTableCellRenderer
 internal object WorkbenchUi {
     val bg = JBColor(Color(0xffffff), Color(0x1e1f22))
     val surface = JBColor(Color(0xf7f8fa), Color(0x26282b))
-    val sidebarBg = JBColor(Color(0xf2f4f7), Color(0x2b2d30))
     val border = JBColor(Color(0xdce0e7), Color(0x393b40))
     val text = JBColor(Color(0x242934), Color(0xdfdfdf))
     val muted = JBColor(Color(0x656e7d), Color(0x9da5b4))
@@ -217,7 +216,11 @@ internal class WorkbenchTabs : JPanel(BorderLayout()) {
     fun setTitleAt(index: Int, value: String) { buttons[index].text = value }
     private fun updateSelection() { buttons.forEachIndexed { i, b -> b.foreground = if (i == selectedIndex) WorkbenchUi.text else WorkbenchUi.muted; b.isBorderPainted = i == selectedIndex; b.border = if (i == selectedIndex) BorderFactory.createMatteBorder(0,0,2,0,WorkbenchUi.accent) else JBUI.Borders.empty(0,0,2,0) } }
 }
-/** Kit 目前用中文字面量表达审阅状态；集中在此处，Kit 一旦改为结构化枚举只需改这里。 */
+/**
+ * Kit 目前用中文字面量表达审阅状态；集中在此处，Kit 一旦改为结构化枚举只需改这里。
+ * 契约来源：agent-workbench/scripts/workspace_status.py 的 DOCUMENT_REVIEW_VALUES
+ * （{"未生成","待审阅","已批准"}），由 feature README 的「需求/设计/计划审阅」元数据行解析而来。
+ */
 internal object KitSemantics {
     const val REVIEW_APPROVED = "已批准"
     fun reviewPending(value: String?): Boolean = value != null && value != REVIEW_APPROVED
@@ -226,10 +229,25 @@ internal object KitSemantics {
 internal fun JsonElement?.obj(): JsonObject? = if (this?.isJsonObject == true) asJsonObject else null
 internal fun JsonObject.obj(key: String): JsonObject? = get(key)?.obj()
 internal fun JsonObject.str(key: String): String? = get(key)?.takeIf { it.isJsonPrimitive }?.asString
-internal fun JsonObject.bool(key: String): Boolean? = get(key)?.takeIf { it.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull()
 internal fun JsonObject.objects(key: String) = get(key)?.takeIf { it.isJsonArray }?.asJsonArray?.mapNotNull { it.obj() }.orEmpty()
 internal fun JsonElement?.texts(): String = if (this?.isJsonArray == true) asJsonArray.joinToString { if (it.isJsonPrimitive) it.asString else "" } else ""
 internal fun JsonElement?.text(): String = if (this == null || isJsonNull) "—" else if (isJsonPrimitive) asString else toString()
+
+/** Kit 仓库 id -> 本地绝对路径；字段名与 inspect schema 的 $defs/repository（id/absolutePath）对齐。 */
+internal fun repositoryRoots(repositories: List<JsonObject>): Map<String, java.nio.file.Path> =
+    repositories.mapNotNull { repo ->
+        val id = repo.str("id") ?: return@mapNotNull null
+        val path = repo.str("absolutePath") ?: return@mapNotNull null
+        id to java.nio.file.Path.of(path)
+    }.toMap()
+
+/** doctor findings[].remediation 是 {kind, detail} 对象或 null；返回可展示的一行文案。 */
+internal fun remediationText(finding: JsonObject): String? {
+    val remediation = finding.obj("remediation") ?: return null
+    val detail = remediation.str("detail")?.takeIf(String::isNotBlank) ?: return null
+    val caption = if (remediation.str("kind") == "command") "修复命令" else "修复建议"
+    return "$caption：$detail"
+}
 
 internal class TimelineMarker(
     private val current: Boolean,

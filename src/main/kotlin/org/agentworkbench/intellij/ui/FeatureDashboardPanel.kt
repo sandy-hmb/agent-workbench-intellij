@@ -26,7 +26,6 @@ import javax.swing.event.HyperlinkEvent
 internal class FeatureDashboardPanel(
     private val project: Project,
     private val onOpenTask: (JsonObject) -> Unit,
-    private val onShowDiff: (String, String) -> Unit,
     private val onOpenDoc: (String) -> Unit
 ) : JPanel(BorderLayout()), Disposable {
 
@@ -365,16 +364,21 @@ internal class FeatureDashboardPanel(
         onNavigateToTab = onNavigateTab
         val summary = featureData.get("summary").obj()
         currentSlug = summary?.str("slug") ?: ""
+        val previousReqPath = currentReqPath
+        val previousReqContent = currentReqContent
         currentReqPath = requirementsPath ?: "requirements/requirements.md"
         reqDocTitle.text = currentReqPath
         scopeLbl.text = "需求范围"
 
-        // 1. 渲染需求概述文本
-        val contentToRender = if (!requirementsContent.isNullOrBlank()) {
-            requirementsContent
-        } else {
-            val desc = featureData.get("description").obj()?.str("content")
-            if (!desc.isNullOrBlank()) desc else "正在读取 $currentReqPath…"
+        // 1. 渲染需求概述文本：调用方可能传 null（内容由后台本地读取或远程 loadDocument 异步补上），
+        //    此时保留同一路径下已加载的内容，避免把已渲染正文打回占位文案。
+        val contentToRender = when {
+            !requirementsContent.isNullOrBlank() -> requirementsContent
+            previousReqPath == currentReqPath && previousReqContent.isNotBlank() -> previousReqContent
+            else -> {
+                val desc = featureData.get("description").obj()?.str("content")
+                if (!desc.isNullOrBlank()) desc else "正在读取 $currentReqPath…"
+            }
         }
         setRequirementsContent(currentReqPath, contentToRender)
 
@@ -479,6 +483,7 @@ internal class FeatureDashboardPanel(
     }
 
     fun setRequirementsContent(path: String, content: String) {
+        if (currentReqPath == path && currentReqContent == content) return
         currentReqPath = path
         currentReqContent = content
         reqDocTitle.text = path

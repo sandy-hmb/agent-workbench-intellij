@@ -7,7 +7,13 @@ import java.time.Instant
 internal data class InspectResponse(
     val operation: String, val status: String, val observedAt: Instant, val root: String?, val revision: String?, val data: JsonElement?, val diagnostics: List<InspectDiagnostic>,
 )
-internal data class InspectDiagnostic(val code: String, val message: String)
+internal data class InspectDiagnostic(
+    val code: String,
+    val message: String,
+    val severity: String? = null,
+    val path: String? = null,
+    val line: Int? = null,
+)
 
 internal object InspectProtocol {
     fun parse(text: String, expectedOperation: String, expectedRoot: String): Result<InspectResponse> = runCatching {
@@ -19,7 +25,13 @@ internal object InspectProtocol {
         val observedAt = Instant.parse(envelope.requiredString("observedAt"))
         val diagnostics = envelope.requiredArray("diagnostics").map { item ->
             val diagnostic = item.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: error("Inspect 诊断格式无效")
-            InspectDiagnostic(diagnostic.requiredString("code"), diagnostic.requiredString("message"))
+            InspectDiagnostic(
+                diagnostic.requiredString("code"),
+                diagnostic.requiredString("message"),
+                diagnostic.nullableString("severity"),
+                diagnostic.nullableString("path"),
+                diagnostic.nullableInt("line"),
+            )
         }
         val root = envelope.nullableString("root")
         val revision = envelope.nullableString("revision")
@@ -55,4 +67,6 @@ internal object InspectProtocol {
         val value = get(name) ?: error("Inspect 缺少 $name"); require(value.isJsonPrimitive && value.asJsonPrimitive.isNumber) { "Inspect $name 类型无效" }; return value.asBigDecimal.intValueExact()
     }
     private fun JsonObject.nullableString(name: String) = get(name)?.takeUnless(JsonElement::isJsonNull)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+    private fun JsonObject.nullableInt(name: String): Int? = get(name)?.takeUnless(JsonElement::isJsonNull)
+        ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.runCatching { asBigDecimal.intValueExact() }?.getOrNull()
 }

@@ -21,10 +21,9 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             addParameters("-B", entry.toString(), "inspect", "--root", root.toString(), "--api-major", "1", "--json", operation, *arguments.toTypedArray())
         }
         val process = command.createProcess()
-        val pool = Executors.newFixedThreadPool(2)
+        val stdout = STREAM_POOL.submit<String> { readBounded(process.inputStream, MAX_STDOUT, process) }
+        val stderr = STREAM_POOL.submit<String> { readBounded(process.errorStream, MAX_STDERR, process) }
         try {
-            val stdout = pool.submit<String> { readBounded(process.inputStream, MAX_STDOUT, process) }
-            val stderr = pool.submit<String> { readBounded(process.errorStream, MAX_STDERR, process) }
             val timeout = if (operation == "verification" && arguments.contains("--check-code")) VERIFY_TIMEOUT_MILLIS else TIMEOUT_MILLIS
             var waited = 0
             while (!process.waitFor(200, TimeUnit.MILLISECONDS)) {
@@ -57,7 +56,8 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             response
         } finally {
             if (process.isAlive) process.destroyForcibly()
-            pool.shutdownNow()
+            stdout.cancel(true)
+            stderr.cancel(true)
         }
     }
 
@@ -72,10 +72,9 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             addParameters("-B", entry.toString(), subcommand, *arguments.toTypedArray())
         }
         val process = command.createProcess()
-        val pool = Executors.newFixedThreadPool(2)
+        val stdout = STREAM_POOL.submit<String> { readBounded(process.inputStream, MAX_STDOUT, process) }
+        val stderr = STREAM_POOL.submit<String> { readBounded(process.errorStream, MAX_STDERR, process) }
         try {
-            val stdout = pool.submit<String> { readBounded(process.inputStream, MAX_STDOUT, process) }
-            val stderr = pool.submit<String> { readBounded(process.errorStream, MAX_STDERR, process) }
             var waited = 0
             while (!process.waitFor(200, TimeUnit.MILLISECONDS)) {
                 if (Thread.currentThread().isInterrupted) error("Kit 命令已取消")
@@ -92,18 +91,24 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             text
         } finally {
             if (process.isAlive) process.destroyForcibly()
-            pool.shutdownNow()
+            stdout.cancel(true)
+            stderr.cancel(true)
         }
     }
 
     private companion object {
         val LOG = Logger.getInstance(KitClient::class.java)
         val OPERATIONS = setOf("workspace", "features", "feature", "document", "verification", "workflow", "runs", "run")
-        val TOOLS = setOf("doctor", "describe", "brief", "feature")
+        val TOOLS = setOf("doctor", "describe", "brief")
         const val TIMEOUT_MILLIS = 12_000
         const val VERIFY_TIMEOUT_MILLIS = 32_000
         const val MAX_STDOUT = 8 * 1024 * 1024
         const val MAX_STDERR = 64 * 1024
+
+        /** 所有 Kit 子进程共享的流读取线程池；每次调用新建线程池会造成大量一次性线程。 */
+        val STREAM_POOL: java.util.concurrent.ExecutorService = Executors.newCachedThreadPool { runnable ->
+            Thread(runnable, "agent-workbench-kit-io").apply { isDaemon = true }
+        }
 
         fun readBounded(stream: InputStream, limit: Int, process: Process): String {
             stream.use { input ->

@@ -32,7 +32,6 @@ import git4idea.fetch.GitFetchSupport
 import git4idea.repo.GitRepositoryManager
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.Future
 
 /** 所有操作先解析唯一仓库，再向宿主传递明确的根或文件集合。 */
 internal class HostGit(private val project: Project) {
@@ -75,8 +74,13 @@ internal class HostGit(private val project: Project) {
         GitFetchSupport.fetchSupport(project).fetch(repository, remote).throwExceptionIfFailed()
     }
 
-    fun fetchAsync(root: Path, remoteName: String): Future<Result<Unit>> =
-        ApplicationManager.getApplication().executeOnPooledThread<Result<Unit>> { fetch(root, remoteName) }
+    /** 后台执行 fetch，完成后在 EDT 回调结果；避免调用方再起线程阻塞等待。 */
+    fun fetchAsync(root: Path, remoteName: String, onDone: (Result<Unit>) -> Unit) {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = fetch(root, remoteName)
+            ApplicationManager.getApplication().invokeLater { if (!project.isDisposed) onDone(result) }
+        }
+    }
 
     fun rootFile(root: Path): VirtualFile? = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(root.toRealPath())
 
@@ -175,7 +179,7 @@ internal class HostGit(private val project: Project) {
         workLabel: String = "需求分支版本"
     ): Result<Unit> = runCatching {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val repository = repository(root)
+        repository(root) // 仅校验 root 是宿主已识别的独立 Git 仓
         val file = root.resolve(relativePath).toFile()
         val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
             ?: VcsUtil.getVirtualFile(file)
@@ -201,7 +205,7 @@ internal class HostGit(private val project: Project) {
 
     fun showWorkspaceDiff(root: Path, baseCommit: String, relativePath: String): Result<Unit> = runCatching {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val repository = repository(root)
+        repository(root) // 仅校验 root 是宿主已识别的独立 Git 仓
         val file = root.resolve(relativePath).toFile()
         val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
             ?: error("在工作区中未找到本地文件：$relativePath")
@@ -248,8 +252,4 @@ internal class HostGit(private val project: Project) {
         ?: throw UnrecognizedRepository(root)
 
     internal class UnrecognizedRepository(root: Path) : IllegalStateException("宿主未识别独立 Git 仓库：$root")
-
-    private companion object {
-        val COMMIT_ID = Regex("(?:[0-9a-f]{40}|[0-9a-f]{64})")
-    }
 }

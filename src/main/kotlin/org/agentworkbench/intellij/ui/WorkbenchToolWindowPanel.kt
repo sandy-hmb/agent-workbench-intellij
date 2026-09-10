@@ -383,9 +383,9 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
                 val role = value.str("role")
                 icon = if (role == "kit") AllIcons.Vcs.Branch else AllIcons.Nodes.Folder
                 val name = value.str("id") ?: value.str("name") ?: ""
-                val defaultBranch = value.str("defaultBranch") ?: "main"
+                val workBase = value.obj("effectiveBranchPolicy")?.str("workBase")
                 append(name, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                append("  ($defaultBranch)", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+                if (workBase != null) append("  ($workBase)", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
             }
         }
         repoList.addMouseListener(object : MouseAdapter() {

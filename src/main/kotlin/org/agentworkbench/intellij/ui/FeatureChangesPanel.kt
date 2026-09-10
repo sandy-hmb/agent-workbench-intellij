@@ -52,23 +52,18 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
         fetchBtn.isEnabled = false
         fetchBtn.text = "正在 Fetch…"
 
-        HostGit(project).fetchAsync(root, "origin").let { future ->
-            ApplicationManager.getApplication().executeOnPooledThread {
-                val result = runCatching { future.get() }.getOrNull() ?: Result.failure(Exception("Fetch 失败"))
-                ApplicationManager.getApplication().invokeLater {
-                    fetchBtn.isEnabled = true
-                    fetchBtn.text = "抓取远程 (Fetch)"
-                    result.fold(
-                        onSuccess = {
-                            WorkbenchNotifier.info(project, "Fetch 完成", "仓库 $repoName 远程分支已更新到最新。")
-                            load()
-                        },
-                        onFailure = { err ->
-                            WorkbenchNotifier.warn(project, "Fetch 失败", err.message ?: "未知错误")
-                        }
-                    )
+        HostGit(project).fetchAsync(root, "origin") { result ->
+            fetchBtn.isEnabled = true
+            fetchBtn.text = "抓取远程 (Fetch)"
+            result.fold(
+                onSuccess = {
+                    WorkbenchNotifier.info(project, "Fetch 完成", "仓库 $repoName 远程分支已更新到最新。")
+                    load()
+                },
+                onFailure = { err ->
+                    WorkbenchNotifier.warn(project, "Fetch 失败", err.message ?: "未知错误")
                 }
-            }
+            )
         }
     }.apply {
         icon = AllIcons.Actions.Refresh

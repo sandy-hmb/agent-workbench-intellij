@@ -13,7 +13,7 @@ import java.nio.file.Path
 internal class WorkbenchSettings : PersistentStateComponent<WorkbenchSettings.Data> {
     data class Position(var key: String = "", var offset: Int = 0)
     data class Preference(
-        var root: String = "", var python: String = "python3", var query: String = "", var status: String = "全部", var tab: Int = 0, var run: String = "", var feature: String = "", var document: String = "", var allRuns: Boolean = false, var positions: MutableList<Position> = mutableListOf(),
+        var root: String = "", var python: String = "python3", var query: String = "", var status: String = "全部", var tab: Int = 0, var run: String = "", var feature: String = "", var document: String = "", var positions: MutableList<Position> = mutableListOf(),
     )
     data class Binding(var projectRoot: String = "", var kitRoot: String = "")
     data class Data(var preferences: MutableList<Preference> = mutableListOf(), var bindings: MutableList<Binding> = mutableListOf())

@@ -79,21 +79,20 @@ internal class NativeGit(private val executable: String = "git") {
             .redirectErrorStream(true)
             .apply { environment()["GIT_OPTIONAL_LOCKS"] = "0" }
             .start()
-        val executor = Executors.newSingleThreadExecutor()
-        try {
-            val output = executor.submit<String> {
-                process.inputStream.bufferedReader().use { reader ->
-                    val collected = StringBuilder()
-                    val buffer = CharArray(8192)
-                    while (true) {
-                        val count = reader.read(buffer)
-                        if (count < 0) break
-                        if (collected.length + count > MAX_OUTPUT) throw IOException("Git 输出超过限额")
-                        collected.append(buffer, 0, count)
-                    }
-                    collected.toString()
+        val output = STREAM_POOL.submit<String> {
+            process.inputStream.bufferedReader().use { reader ->
+                val collected = StringBuilder()
+                val buffer = CharArray(8192)
+                while (true) {
+                    val count = reader.read(buffer)
+                    if (count < 0) break
+                    if (collected.length + count > MAX_OUTPUT) throw IOException("Git 输出超过限额")
+                    collected.append(buffer, 0, count)
                 }
+                collected.toString()
             }
+        }
+        try {
             if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
                 throw IOException("Git 只读查询超时")
@@ -108,8 +107,8 @@ internal class NativeGit(private val executable: String = "git") {
             Thread.currentThread().interrupt()
             throw IOException("Git 查询已取消", interrupted)
         } finally {
-            executor.shutdownNow()
             if (process.isAlive) process.destroyForcibly()
+            output.cancel(true)
         }
     }
 
@@ -135,6 +134,10 @@ internal class NativeGit(private val executable: String = "git") {
         const val TIMEOUT_SECONDS = 10L
         const val MAX_OUTPUT = 1024 * 1024
         val CONFLICT_CODES = setOf("UU", "AA", "DD", "DU", "UD", "AU", "UA")
+        /** 所有 git 只读命令共享的输出读取线程池；每条命令新建线程池会造成大量一次性线程。 */
+        private val STREAM_POOL: java.util.concurrent.ExecutorService = Executors.newCachedThreadPool { runnable ->
+            Thread(runnable, "agent-workbench-git-io").apply { isDaemon = true }
+        }
         fun forProject(project: Project): NativeGit = NativeGit(GitExecutableManager.getInstance().getPathToGit(project))
     }
 }

@@ -22,10 +22,14 @@ repositories {
 val ideaPath = providers.gradleProperty("ideaPath").map(::file)
 val rebasedPath = providers.gradleProperty("rebasedPath").map(::file)
 val smokeRoot = providers.gradleProperty("smokeRoot").orNull
+// 本机装了 IDEA/Rebased 时优先 local 构建；路径不存在（其他开发机、CI）时回退到可移植声明。
+val localIdea = ideaPath.orNull?.takeIf { it.exists() }
+val localRebased = rebasedPath.orNull?.takeIf { it.exists() }
+val platformVersion = providers.gradleProperty("platformVersion").getOrElse("2025.2")
 
 dependencies {
     intellijPlatform {
-        local(ideaPath)
+        if (localIdea != null) local(localIdea) else intellijIdeaCommunity(platformVersion)
         bundledPlugin("Git4Idea")
         testFramework(TestFrameworkType.Platform)
     }
@@ -58,8 +62,9 @@ intellijPlatform {
     }
     pluginVerification {
         ides {
-            local(ideaPath)
-            local(rebasedPath)
+            if (localIdea != null) local(localIdea)
+            if (localRebased != null) local(localRebased)
+            if (localIdea == null && localRebased == null) recommended()
         }
     }
 }
@@ -83,22 +88,24 @@ tasks {
 }
 
 intellijPlatformTesting {
-    runIde.register("runRebased") {
-        localPath.set(layout.dir(rebasedPath))
-        sandboxDirectory.set(layout.buildDirectory.dir("rebased-sandbox"))
-        task {
-            group = "intellij platform"
-            description = "在 Rebased 隔离沙箱中运行插件。"
-            if (smokeRoot != null) args(smokeRoot)
+    if (localRebased != null) {
+        runIde.register("runRebased") {
+            localPath.set(layout.dir(rebasedPath))
+            sandboxDirectory.set(layout.buildDirectory.dir("rebased-sandbox"))
+            task {
+                group = "intellij platform"
+                description = "在 Rebased 隔离沙箱中运行插件。"
+                if (smokeRoot != null) args(smokeRoot)
+            }
         }
-    }
-    testIde.register("testRebased") {
-        localPath.set(layout.dir(rebasedPath))
-        sandboxDirectory.set(layout.buildDirectory.dir("rebased-test-sandbox"))
-        testFramework(TestFrameworkType.Platform)
-        task {
-            group = "verification"
-            description = "使用 Rebased 运行平台测试。"
+        testIde.register("testRebased") {
+            localPath.set(layout.dir(rebasedPath))
+            sandboxDirectory.set(layout.buildDirectory.dir("rebased-test-sandbox"))
+            testFramework(TestFrameworkType.Platform)
+            task {
+                group = "verification"
+                description = "使用 Rebased 运行平台测试。"
+            }
         }
     }
 }

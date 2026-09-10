@@ -3,26 +3,17 @@ package org.agentworkbench.intellij.ui
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
-import com.intellij.ui.components.JBLabel
-import com.intellij.util.ui.JBUI
 import org.agentworkbench.intellij.WorkbenchService
 import org.agentworkbench.intellij.WorkbenchSettings
-import java.awt.BorderLayout
-import java.awt.GridLayout
 import java.nio.file.Files
 import java.nio.file.Path
-import javax.swing.JButton
-import javax.swing.JComponent
-import javax.swing.JPanel
 
 class WorkbenchToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -85,8 +76,7 @@ class WorkbenchToolWindowFactory : ToolWindowFactory {
                 savedKit?.let(Path::of),
                 projectRoot,
                 projectRoot.resolve("agent-workbench"),
-                projectRoot.parent?.resolve("agent-workbench"),
-                Path.of(System.getProperty("user.home"), "workspace/code/agent-workbench")
+                projectRoot.parent?.resolve("agent-workbench")
             )
                 .filterNotNull()
                 .mapNotNull { runCatching { it.toRealPath() }.getOrNull() }
