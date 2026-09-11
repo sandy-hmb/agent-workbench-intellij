@@ -9,6 +9,7 @@ import java.awt.datatransfer.StringSelection
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
@@ -25,6 +26,8 @@ import org.agentworkbench.intellij.WorkbenchSettings
 import org.agentworkbench.intellij.git.GitScanService
 import org.agentworkbench.intellij.git.NativeGit
 import org.agentworkbench.intellij.kit.KitClient
+import org.agentworkbench.intellij.kit.HandoffData
+import org.agentworkbench.intellij.kit.SearchHit
 import java.awt.*
 import java.net.URI
 import java.nio.file.Path
@@ -115,6 +118,12 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private val workflowBody = U.column()
     private val globalRuns = U.column()
     private val globalExtensions = U.column()
+    private val historySearch = SearchTextField()
+    private val historyRepository = JComboBox(arrayOf("全部仓库"))
+    private val historyStatus = JComboBox(arrayOf("全部状态", "planning", "development", "testing", "paused", "done"))
+    private val historyModel = DefaultListModel<SearchHit>()
+    private val historyResults = JBList(historyModel)
+    private val historyCount = U.label("输入关键词后搜索当前工作区的历史文档", 11, U.muted)
     private val runPicker = JComboBox<String>()
     private val runStatus = U.label("", 11, U.muted)
     private val configuration = U.column()
@@ -312,6 +321,29 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         pages.add(U.padded(U.panel().apply { add(featureNorth, BorderLayout.NORTH); add(tabs) }), "feature")
         pages.add(U.page(U.padded(globalRuns) as JPanel), "runs")
         pages.add(U.page(U.padded(globalExtensions) as JPanel), "extensions")
+        historySearch.textEditor.emptyText.text = "搜索需求、设计、计划或验证记录..."
+        historySearch.preferredSize = Dimension(JBUI.scale(300), JBUI.scale(32))
+        listOf(historyRepository, historyStatus).forEach(U::combo)
+        historyResults.background = U.bg
+        historyResults.selectionBackground = U.selection
+        historyResults.setEmptyText("没有匹配的历史文档")
+        historyResults.cellRenderer = ListCellRenderer<SearchHit> { _, value, _, selected, _ ->
+            U.column(
+                6,
+                U.flow(U.label(value.title, 12, bold = true), U.badge(U.status(value.status))),
+                U.mono("${value.slug} · ${value.path}:${value.line}"),
+                U.copy(value.snippet),
+            ).apply {
+                border = BorderFactory.createCompoundBorder(BottomLine(U.border), JBUI.Borders.empty(12, 8))
+                if (selected) paintBackground(this, U.selection)
+            }
+        }
+        val historyPage = U.column()
+        U.append(historyPage, pageHeader("历史检索", "搜索当前工作区的 Feature 文档"))
+        U.append(historyPage, U.row(historySearch, U.flow(historyRepository, historyStatus, U.button("搜索") { searchHistory() }.apply { icon = AllIcons.Actions.Find })), 20)
+        U.append(historyPage, historyCount, 6)
+        U.append(historyPage, U.scroll(historyResults).apply { preferredSize = Dimension(1, JBUI.scale(520)) }, 12)
+        pages.add(U.page(U.padded(historyPage) as JPanel), "search")
         pages.add(U.padded(U.panel().apply { add(pageHeader("业务仓库", "查看现场 · 使用宿主 Git 操作", U.button("刷新") { reload() }.apply { icon = AllIcons.Actions.Refresh }), BorderLayout.NORTH); add(repositoryGit) }), "repositories")
         pages.add(U.page(U.padded(configuration) as JPanel), "configuration")
         val diagnosticsPage = U.column()
@@ -354,6 +386,24 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             }
         })
         runPicker.addActionListener { if (!changing) { loadRun(); remember() } }
+        historySearch.textEditor.addActionListener { searchHistory() }
+        historyResults.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(event: java.awt.event.MouseEvent) {
+                if (event.clickCount == 2) historyResults.selectedValue?.let(::openSearchHit)
+            }
+        })
+        historyResults.addMouseListener(object : com.intellij.ui.PopupHandler() {
+            override fun invokePopup(comp: Component, x: Int, y: Int) {
+                val index = historyResults.locationToIndex(Point(x, y))
+                if (index < 0) return
+                historyResults.selectedIndex = index
+                val hit = historyResults.selectedValue ?: return
+                JPopupMenu().apply {
+                    add(JMenuItem("打开原文").apply { addActionListener { openSearchHit(hit) } })
+                    add(JMenuItem("复制出处").apply { addActionListener { copySearchHit(hit) } })
+                }.show(comp, x, y)
+            }
+        })
         reader.onPosition = { line -> state.kitRoot?.let { root -> selectedDocument?.let { path -> documentRevision?.let { revision -> settings.rememberPosition(root, "$selectedSlug:$path:$revision", line) } } } }
         listOf(reader, committedChanges, git, repositoryGit, workingGit).forEach { Disposer.register(this, it) }
         scanService.subscribe(this) { scans, scanning ->
@@ -398,14 +448,14 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     }
     fun navigate(page: String) {
         route = page; (pages.layout as CardLayout).show(pages, page)
-        editorTitle.text = when(page) { "feature" -> detailData?.get("summary").obj()?.str("title") ?: "Feature 工作台"; "features" -> "Feature 工作台"; "runs" -> "流程记录"; "extensions" -> "扩展"; "configuration" -> "工作区配置"; "repositories" -> "业务仓库"; "diagnostics" -> "读取诊断"; else -> "" }
+        editorTitle.text = when(page) { "feature" -> detailData?.get("summary").obj()?.str("title") ?: "Feature 工作台"; "features" -> "Feature 工作台"; "search" -> "历史检索"; "runs" -> "流程记录"; "extensions" -> "扩展"; "configuration" -> "工作区配置"; "repositories" -> "业务仓库"; "diagnostics" -> "读取诊断"; else -> "" }
         renderSidebar(); loadVisible()
     }
     fun refresh() {
         if(disposed) return
         val next = service.snapshot(); val changedRoot = state.kitRoot != next.kitRoot; state = next
         (layout as? CardLayout)?.show(this, if (state.kitRoot.isNullOrBlank()) "EMPTY" else "CONTENT")
-        if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; businessReposExpanded=false; describeLoaded=false; describeSummaries=emptyMap(); lastLocalReqKey=null; pendingKit.clear(); restore() }
+        if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; businessReposExpanded=false; describeLoaded=false; describeSummaries=emptyMap(); lastLocalReqKey=null; pendingKit.clear(); historyModel.clear(); historyCount.text="输入关键词后搜索当前工作区的历史文档"; restore() }
         overviewPath.text=state.kitRoot ?: "在侧栏入口绑定工作流 Kit"
         workspaceName.text = state.workspace?.data.obj()?.get("identity").obj()?.str("name") ?: "研发工作区"
         workspacePath.text = state.kitRoot?.let { Path.of(it).fileName.toString() } ?: "尚未绑定 Kit"
@@ -422,6 +472,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             lastWorkspaceRevision = state.workspace?.revision
             scanService.refresh(repositories())
             changing=true; val selected=repoFilter.selectedItem; repoFilter.removeAllItems(); repoFilter.addItem("全部仓库"); repositories().forEach { repoFilter.addItem(it.str("id")) }; repoFilter.selectedItem=selected ?: "全部仓库"; changing=false
+            changing=true; val historySelected=historyRepository.selectedItem; historyRepository.removeAllItems(); historyRepository.addItem("全部仓库"); repositories().filter { it.str("role") == if(mode == "maintenance") "kit" else "business" }.forEach { historyRepository.addItem(it.str("id")) }; historyRepository.selectedItem=historySelected?.takeIf { value -> (0 until historyRepository.itemCount).any { historyRepository.getItemAt(it) == value } } ?: "全部仓库"; changing=false
         }
         renderSidebar(); renderWorkspaceSummary(); filterFeatures(); renderConfiguration()
         if (state.kitRoot != null && !doctorRan && !runningDoctor) {
@@ -434,6 +485,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         nav.removeAll(); nav.background=U.surface; nav.border=JBUI.Borders.empty(0,9)
         U.append(nav, navButton("overview", "工作区总览", AllIcons.Nodes.HomeFolder) { navigate("overview") })
         U.append(nav, navButton("features", "Feature 工作台", AllIcons.Actions.ListFiles, state.features.size.toString()) { navigate("features") },2)
+        U.append(nav, navButton("search", "历史检索", AllIcons.Actions.Find) { navigate("search") },2)
         U.append(nav, navButton("runs", "流程记录", AllIcons.Vcs.History) { navigate("runs") },2)
         U.append(nav, navButton("extensions", "扩展", AllIcons.Nodes.Plugin, workflowData?.objects("extensions")?.size?.toString().orEmpty()) { navigate("extensions") },2)
         for((role,title) in listOf("business" to "业务仓库", "kit" to "工作流仓库")) {
@@ -576,6 +628,45 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         featureCount.text="${rows.size} 个需求 · 已加载 ${state.features.size} 个"
         featureList.revalidate(); featureList.repaint()
     }
+    private fun searchHistory() {
+        val query = historySearch.text.trim()
+        if (query.isBlank()) {
+            historyModel.clear()
+            historyCount.text = "输入关键词后搜索当前工作区的历史文档"
+            return
+        }
+        if (!service.supports("search")) {
+            historyCount.text = "当前 Kit 不支持历史检索，请升级后重试"
+            return
+        }
+        val repository = historyRepository.selectedItem?.toString()?.takeUnless { it == "全部仓库" }
+        val status = historyStatus.selectedItem?.toString()?.takeUnless { it == "全部状态" }
+        historyCount.text = "正在搜索…"
+        service.searchHistory(query, repository, status) { result ->
+            if (disposed || historySearch.text.trim() != query) return@searchHistory
+            val data = result.search
+            if (result.error != null || data?.query != query) {
+                historyCount.text = "搜索失败：${result.error ?: "结果不可用"}"
+                return@searchHistory
+            }
+            historyModel.clear()
+            data.items.forEach(historyModel::addElement)
+            historyCount.text = buildString {
+                append("${data.total} 条结果")
+                if (data.hasMore) append(" · 仅显示前 ${data.items.size} 条")
+                if (data.incomplete) append(" · 部分文档无法读取，结果不完整")
+            }
+        }
+    }
+    private fun openSearchHit(hit: SearchHit) {
+        if (!WorkbenchNavigation.openFeatureInEditor(project, hit.slug, hit.path, hit.line)) {
+            WorkbenchNotifier.warn(project, "无法打开搜索结果", "${hit.slug}/${hit.path}:${hit.line}")
+        }
+    }
+    private fun copySearchHit(hit: SearchHit) {
+        val source = "${hit.slug}/${hit.path}:${hit.line}\n${hit.snippet}"
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(source), null)
+    }
     private fun openSelectedFeature() { featureList.selectedValue?.str("slug")?.let(::selectFeature) }
     private fun paintBackground(component: Component, color: Color) {
         component.background = color
@@ -654,18 +745,21 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
 
         val rightActions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)).apply {
             isOpaque = false
-            val copyPromptBtn = U.button("复制接手提示词", true) {
-                service.copyPrompt(slug) { result ->
+            val copyPromptBtn = U.button("预览接手包", true) {
+                if (service.supports("handoff")) service.loadHandoff(slug) { result ->
+                    val data = result.handoff
+                    if (selectedSlug != slug) return@loadHandoff
+                    if (result.error == null && data?.slug == slug) HandoffDialog(project, data).show()
+                    else WorkbenchNotifier.warn(project, "获取接手包失败", result.error ?: "接手包不可用")
+                } else service.copyPrompt(slug) { result ->
                     result.fold({ text ->
                         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
-                        WorkbenchNotifier.info(project, "已复制接手提示词", "kit brief $slug --execution 的输出已在剪贴板，可直接交给 Agent 接手此需求。")
-                    }, { failure ->
-                        WorkbenchNotifier.warn(project, "获取接手提示词失败", failure.message ?: "未知错误")
-                    })
+                        WorkbenchNotifier.info(project, "已复制接手提示词", "当前 Kit 不支持接手包预览，已复制兼容版 brief。")
+                    }, { failure -> WorkbenchNotifier.warn(project, "获取接手提示词失败", failure.message ?: "未知错误") })
                 }
             }.apply {
-                icon = AllIcons.Actions.Copy
-                toolTipText = "复制 kit brief --execution 输出：让 Agent 脱离历史对话接手此需求的最小上下文包"
+                icon = AllIcons.Actions.Preview
+                toolTipText = "预览带来源和 token 估算的接手包；旧 Kit 自动复制兼容版 brief"
             }
             val openDocBtn = U.button("查看文档 (F4)", true) {
                 WorkbenchNavigation.openFeatureInEditor(project, slug)
@@ -1127,7 +1221,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             if(runPicker.itemCount>0) loadRun() else { runData=null;renderWorkflow() }
         }
     }
-    private fun loadRun() { val id=runPicker.selectedItem?.toString()?:return; readRun(id) }
+    private fun loadRun() { val id=runPicker.selectedItem?.toString()?:return; runData=null;renderWorkflow();readRun(id) }
     private fun readRun(id:String) {
         service.loadRun(id) { result ->
             if(disposed) return@loadRun
@@ -1488,5 +1582,86 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         const val CHANGES = 3
         const val VERIFY = 4
         const val WORKFLOW = 5
+    }
+}
+
+private class HandoffDialog(
+    private val project: Project,
+    private val data: HandoffData,
+) : DialogWrapper(project) {
+    private val reader = DocumentReader(project) { }
+    private val sourceModel = DefaultListModel<org.agentworkbench.intellij.kit.HandoffSource>()
+    private val sourceList = JBList(sourceModel)
+
+    init {
+        title = "接手包 · ${data.slug}"
+        setOKButtonText("复制")
+        setCancelButtonText("关闭")
+        data.sources.forEach(sourceModel::addElement)
+        sourceList.cellRenderer = ListCellRenderer { list, value, index, selected, focus ->
+            DefaultListCellRenderer().getListCellRendererComponent(
+                list,
+                "${value.kind} · ${value.path}:${value.startLine}",
+                index,
+                selected,
+                focus,
+            )
+        }
+        sourceList.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(event: java.awt.event.MouseEvent) {
+                if (event.clickCount == 2) openSource()
+            }
+        })
+        init()
+        reader.showText(data.content)
+    }
+
+    override fun createCenterPanel(): JComponent {
+        val sourcePanel = U.panel(BorderLayout()).apply {
+            preferredSize = Dimension(JBUI.scale(250), JBUI.scale(500))
+            add(U.label("来源", 12, bold = true), BorderLayout.NORTH)
+            add(U.scroll(sourceList))
+            add(
+                U.button("打开原文", true) { openSource() }
+                    .apply { icon = AllIcons.General.OpenInToolWindow },
+                BorderLayout.SOUTH,
+            )
+        }
+        return U.panel(BorderLayout(JBUI.scale(12), 0)).apply {
+            preferredSize = Dimension(JBUI.scale(900), JBUI.scale(620))
+            add(
+                U.label("估算 ${data.estimatedTokens} tokens · 内容按当前文件即时生成", 11, U.muted),
+                BorderLayout.NORTH,
+            )
+            add(reader)
+            add(sourcePanel, BorderLayout.EAST)
+        }
+    }
+
+    override fun doOKAction() {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(data.content), null)
+        super.doOKAction()
+    }
+
+    private fun openSource() {
+        val source = sourceList.selectedValue ?: return
+        val opened = if (source.kind == "rule") {
+            WorkbenchNavigation.openInEditor(
+                project,
+                WorkbenchService.getInstance(project).snapshot().kitRoot,
+                source.path,
+                source.startLine,
+            )
+        } else {
+            WorkbenchNavigation.openFeatureInEditor(
+                project, data.slug, source.path, source.startLine
+            )
+        }
+        if (!opened) WorkbenchNotifier.warn(project, "无法打开接手来源", source.path)
+    }
+
+    override fun dispose() {
+        Disposer.dispose(reader)
+        super.dispose()
     }
 }

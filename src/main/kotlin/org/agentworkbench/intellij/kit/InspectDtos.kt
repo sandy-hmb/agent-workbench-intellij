@@ -15,6 +15,100 @@ internal data class InspectDiagnostic(
     val line: Int? = null,
 )
 
+private fun JsonObject.text(name: String): String = get(name)
+    ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+    ?: error("Inspect 缺少 $name")
+private fun JsonObject.number(name: String): Int = get(name)
+    ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+    ?.asBigDecimal?.intValueExact() ?: error("Inspect 缺少 $name")
+private fun JsonObject.array(name: String) = get(name)
+    ?.takeIf(JsonElement::isJsonArray)?.asJsonArray ?: error("Inspect 缺少 $name")
+private fun JsonObject.objectValue(name: String) = get(name)
+    ?.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: error("Inspect 缺少 $name")
+
+internal data class HandoffSource(
+    val kind: String,
+    val path: String,
+    val revision: String,
+    val startLine: Int,
+)
+
+internal data class HandoffData(
+    val slug: String,
+    val content: String,
+    val estimatedTokens: Int,
+    val sources: List<HandoffSource>,
+) {
+    companion object {
+        fun parse(data: JsonElement?): HandoffData {
+            val value = data?.takeIf(JsonElement::isJsonObject)?.asJsonObject
+                ?: error("Inspect handoff 缺少 data")
+            return HandoffData(
+                value.text("slug"),
+                value.text("content"),
+                value.number("estimatedTokens"),
+                value.array("sources").map { element ->
+                    val source = element.takeIf(JsonElement::isJsonObject)?.asJsonObject
+                        ?: error("Inspect handoff source 无效")
+                    HandoffSource(
+                        source.text("kind"),
+                        source.text("path"),
+                        source.text("revision"),
+                        source.number("startLine"),
+                    )
+                },
+            )
+        }
+    }
+}
+
+internal data class SearchHit(
+    val slug: String,
+    val title: String,
+    val status: String,
+    val lastUpdated: String,
+    val path: String,
+    val line: Int,
+    val heading: String?,
+    val snippet: String,
+)
+
+internal data class SearchData(
+    val query: String,
+    val items: List<SearchHit>,
+    val total: Int,
+    val hasMore: Boolean,
+    val incomplete: Boolean = false,
+) {
+    companion object {
+        fun parse(data: JsonElement?): SearchData {
+            val value = data?.takeIf(JsonElement::isJsonObject)?.asJsonObject
+                ?: error("Inspect search 缺少 data")
+            val page = value.objectValue("page")
+            return SearchData(
+                value.text("query"),
+                value.array("items").map { element ->
+                    val hit = element.takeIf(JsonElement::isJsonObject)?.asJsonObject
+                        ?: error("Inspect search item 无效")
+                    SearchHit(
+                        hit.text("slug"),
+                        hit.text("title"),
+                        hit.text("status"),
+                        hit.text("lastUpdated"),
+                        hit.text("path"),
+                        hit.number("line"),
+                        hit.get("heading")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString,
+                        hit.text("snippet"),
+                    )
+                },
+                page.number("total"),
+                page.get("hasMore")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }?.asBoolean
+                    ?: error("Inspect search page 缺少 hasMore"),
+            )
+        }
+    }
+}
+
 internal object InspectProtocol {
     fun parse(text: String, expectedOperation: String, expectedRoot: String): Result<InspectResponse> = runCatching {
         val envelope = com.google.gson.JsonParser.parseString(text).takeIf(JsonElement::isJsonObject)?.asJsonObject ?: error("Inspect 信封格式无效")
@@ -48,7 +142,9 @@ internal object InspectProtocol {
     private fun validate(operation: String, data: JsonObject) = when (operation) {
         "workspace" -> { data.requiredString("mode"); data.requiredObject("identity"); data.requiredArray("repositories").forEach(::repository); data.requiredObject("localContext"); data.requiredObject("configuration"); data.requiredObject("protocol") }
         "features", "runs" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..200) { "Inspect page limit 无效" }; data.requiredArray("items") }
+        "search" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..50) { "Inspect search page limit 无效" }; data.requiredString("query"); data.requiredArray("items"); SearchData.parse(data) }
         "feature" -> { data.requiredObject("summary"); data.requiredArray("tasks"); data.requiredArray("files"); data.requiredArray("artifacts"); data.requiredObject("progression"); data.requiredString("featureRevision") }
+        "handoff" -> { data.requiredObject("progression"); data.requiredString("featureRevision"); HandoffData.parse(data) }
         "document" -> { data.requiredString("path"); data.requiredString("revision"); data.requiredString("content") }
         "verification" -> { data.requiredString("slug"); data.requiredString("featureRevision"); data.requiredArray("batches"); data.requiredArray("repositoryStates"); data.requiredString("applicability") }
         "workflow" -> { data.requiredString("configState"); data.requiredArray("extensions") }

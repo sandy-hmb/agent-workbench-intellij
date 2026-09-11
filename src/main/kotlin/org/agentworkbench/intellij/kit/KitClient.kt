@@ -98,7 +98,7 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
 
     private companion object {
         val LOG = Logger.getInstance(KitClient::class.java)
-        val OPERATIONS = setOf("workspace", "features", "feature", "document", "verification", "workflow", "runs", "run")
+        val OPERATIONS = setOf("workspace", "features", "feature", "document", "verification", "handoff", "search", "workflow", "runs", "run")
         val TOOLS = setOf("doctor", "describe", "brief")
         const val TIMEOUT_MILLIS = 12_000
         const val VERIFY_TIMEOUT_MILLIS = 32_000

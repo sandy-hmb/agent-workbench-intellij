@@ -37,7 +37,7 @@ IDEA / Rebased
 
 ### 安装开发包
 
-可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.2.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
+可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.3.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
 
 如需从源码构建，在本仓执行：
 
@@ -48,7 +48,7 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
   test buildPlugin
 ```
 
-安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.2`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
+安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.3`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
 
 ### 首次打开工作区
 
@@ -81,6 +81,8 @@ my-project-workspace/
 | 工作区总览 | Kit 路径、业务仓数量、进行中的 Feature、未提交文件和需要关注的现场 |
 | 业务仓库 | 当前分支、工作区是否干净、上游同步、最近提交、搜索和状态筛选 |
 | Feature 工作台 | 全部生命周期状态、名称搜索、关联仓筛选、计划进度和关注项 |
+| 接手包 | 预览并复制当前任务、阶段、验证摘要和带版本来源，旧 Kit 自动回退兼容提示词 |
+| 历史检索 | 按关键词、仓库和状态搜索当前工作区的需求、设计、计划与验证记录 |
 | Feature 详情 | 概览、文档、计划、需求分支变更、当前工作目录、验证、流程和扩展 |
 | 流程记录 | 按 Run 查看已有记录、配置匹配和结果，不会重新执行流程 |
 | 读取诊断 | 显示缺失 Kit、版本不兼容、损坏记录和单仓读取失败原因 |

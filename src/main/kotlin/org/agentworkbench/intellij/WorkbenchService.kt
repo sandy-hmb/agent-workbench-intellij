@@ -15,7 +15,9 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import org.agentworkbench.intellij.kit.InspectResponse
+import org.agentworkbench.intellij.kit.HandoffData
 import org.agentworkbench.intellij.kit.KitClient
+import org.agentworkbench.intellij.kit.SearchData
 import org.agentworkbench.intellij.ui.WorkbenchVirtualFile
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryChangeListener
@@ -122,7 +124,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             val root = runCatching { Path.of(kitRoot).toRealPath().toString() }.getOrElse { return@launch deliver(callback, snapshot.copy(error = "Kit 根目录不可读取。")) }
             val executable = resolvePython(python) ?: return@launch deliver(callback, snapshot.copy(error = "Python 解释器不可执行。"))
             val previousRoot = snapshot.kitRoot
-            if (previousRoot != root) {
+            if (previousRoot != root || snapshot.python != executable) {
                 if (previousRoot != null) cancelRoot(previousRoot)
                 synchronized(lock) { snapshot = Snapshot.empty(root, executable) }
             }
@@ -145,7 +147,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
     }
 
     fun loadFeature(slug: String, callback: (Snapshot) -> Unit) {
-        synchronized(lock) { snapshot = snapshot.copy(selectedDetail = slug) }
+        synchronized(lock) { snapshot = snapshot.copy(selectedDetail = slug, selectedHandoff = null) }
         requestFor("feature", slug, callback) { state, response -> if (state.selectedDetail == slug) state.copy(detail = response, error = null) else state }
     }
     fun loadDocument(slug: String, path: String, revision: String?, callback: (Snapshot) -> Unit) = requestFor("document", "$slug:$path", callback, listOf(slug, "--path", path) + (revision?.let { listOf("--revision", it) } ?: emptyList())) { state, response -> state.copy(document = response, error = null) }
@@ -153,23 +155,54 @@ internal class WorkbenchService(private val project: Project) : Disposable {
     fun loadVerification(slug: String, checkCode: Boolean, callback: (Snapshot) -> Unit) =
         requestFor("verification", "$slug:${if (checkCode) "code" else "records"}", callback, listOf(slug) + if (checkCode) listOf("--check-code") else emptyList()) { state, response -> state.copy(verification = response, error = null) }
     fun loadWorkflow(callback: (Snapshot) -> Unit) = requestFor("workflow", "", callback) { state, response -> state.copy(workflow = response, error = null) }
+    fun loadHandoff(slug: String, callback: (Snapshot) -> Unit) {
+        synchronized(lock) { snapshot = snapshot.copy(selectedHandoff = slug) }
+        requestFor("handoff", slug, callback, relevant = { it.selectedHandoff == slug }) { state, response ->
+            if (state.selectedHandoff == slug) {
+                state.copy(handoff = HandoffData.parse(response.data), error = null)
+            } else state
+        }
+    }
+    fun searchHistory(query: String, repository: String?, status: String?, callback: (Snapshot) -> Unit) {
+        val selection = listOf(query, repository.orEmpty(), status.orEmpty()).joinToString("\u0000")
+        synchronized(lock) { snapshot = snapshot.copy(selectedSearch = selection) }
+        val arguments = buildList {
+            addAll(listOf("--query", query, "--limit", "50"))
+            repository?.let { addAll(listOf("--repo", it)) }
+            status?.let { addAll(listOf("--status", it)) }
+        }
+        requestFor("search", selection, callback, arguments, relevant = { it.selectedSearch == selection }) { state, response ->
+            if (state.selectedSearch == selection) {
+                state.copy(
+                    search = SearchData.parse(response.data).copy(
+                        incomplete = response.status == "partial"
+                    ),
+                    error = null,
+                )
+            } else state
+        }
+    }
     /** [featureSlug] 非空时由 Kit 服务端按需求过滤（inspect runs --feature），避免拉全量后在客户端过滤。 */
     fun loadRuns(featureSlug: String? = null, callback: (Snapshot) -> Unit) {
         val root = snapshot.kitRoot ?: return
+        synchronized(lock) { snapshot = snapshot.copy(selectedRunsFilter = featureSlug) }
         val filter = featureSlug?.let { listOf("--feature", it) } ?: emptyList()
-        request("runs:$root:${featureSlug.orEmpty()}", callback) { client ->
-            ({ state: Snapshot, response: InspectResponse -> state.copy(runs = response, error = null) }) to loadPages(client, "runs", filter)
+        request("runs:$root:${featureSlug.orEmpty()}", callback, relevant = { it.selectedRunsFilter == featureSlug }) { client ->
+            ({ state: Snapshot, response: InspectResponse -> if (state.selectedRunsFilter == featureSlug) state.copy(runs = response, error = null) else state }) to loadPages(client, "runs", filter)
         }
     }
-    fun loadRun(id: String, callback: (Snapshot) -> Unit) = requestFor("run", id, callback) { state, response -> state.copy(run = response, error = null) }
-
-    private fun requestFor(operation: String, subject: String, callback: (Snapshot) -> Unit, arguments: List<String> = if (subject.isBlank()) emptyList() else listOf(subject), update: (Snapshot, InspectResponse) -> Snapshot) {
-        val current = snapshot
-        if (current.kitRoot == null || current.python == null || disposed) return
-        request("$operation:${current.kitRoot}:$subject", callback) { client -> update to client.inspect(operation, arguments).getOrThrow() }
+    fun loadRun(id: String, callback: (Snapshot) -> Unit) {
+        synchronized(lock) { snapshot = snapshot.copy(selectedRun = id) }
+        requestFor("run", id, callback, relevant = { it.selectedRun == id }) { state, response -> if (state.selectedRun == id) state.copy(run = response, error = null) else state }
     }
 
-    private fun request(key: String, callback: (Snapshot) -> Unit, task: (KitClient) -> Pair<(Snapshot, InspectResponse) -> Snapshot, InspectResponse>) {
+    private fun requestFor(operation: String, subject: String, callback: (Snapshot) -> Unit, arguments: List<String> = if (subject.isBlank()) emptyList() else listOf(subject), relevant: (Snapshot) -> Boolean = { true }, update: (Snapshot, InspectResponse) -> Snapshot) {
+        val current = snapshot
+        if (current.kitRoot == null || current.python == null || disposed) return
+        request("$operation:${current.kitRoot}:$subject", callback, relevant) { client -> update to client.inspect(operation, arguments).getOrThrow() }
+    }
+
+    private fun request(key: String, callback: (Snapshot) -> Unit, relevant: (Snapshot) -> Boolean = { true }, task: (KitClient) -> Pair<(Snapshot, InspectResponse) -> Snapshot, InspectResponse>) {
         val current = snapshot
         val root = current.kitRoot ?: return
         val python = current.python ?: return
@@ -177,7 +210,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         val generation = coordinator.begin(key)
         coroutineJobs[key] = scope.launch {
             val result = runCatching { coordinator.bounded { task(KitClient(Path.of(python), Path.of(root))) } }
-            if (disposed || snapshot.kitRoot != root) {
+            if (disposed || snapshot.kitRoot != root || snapshot.python != python || !relevant(snapshot)) {
                 return@launch
             }
             if (!coordinator.isCurrent(key, generation)) return@launch
@@ -199,7 +232,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             }
             val delivered = snapshot
             if (!disposed && coordinator.isCurrent(key, generation)) ApplicationManager.getApplication().invokeLater {
-                if (!disposed && snapshot.kitRoot == root && coordinator.isCurrent(key, generation)) {
+                if (!disposed && snapshot.kitRoot == root && snapshot.python == python && relevant(snapshot) && coordinator.isCurrent(key, generation)) {
                     callback(delivered)
                     listeners.forEach { it() }
                 }
@@ -242,6 +275,16 @@ internal class WorkbenchService(private val project: Project) : Disposable {
     fun copyPrompt(slug: String, callback: (Result<String>) -> Unit) {
         val root = snapshot.kitRoot ?: return callback(Result.failure(IllegalStateException("未配置 Kit 根目录")))
         val python = snapshot.python ?: return callback(Result.failure(IllegalStateException("未配置 Python 解释器")))
+        if (supports("handoff")) {
+            loadHandoff(slug) { state ->
+                val data = state.handoff
+                callback(
+                    if (state.error == null && data?.slug == slug) Result.success(data.content)
+                    else Result.failure(IllegalStateException(state.error ?: "接手包不可用"))
+                )
+            }
+            return
+        }
         scope.launch {
             if (disposed) return@launch
             val result = KitClient(Path.of(python), Path.of(root)).tool("brief", listOf(slug, "--root", root, "--execution"))
@@ -250,6 +293,11 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             }
         }
     }
+
+    fun supports(operation: String): Boolean = snapshot.workspace?.data
+        ?.takeIf { it.isJsonObject }?.asJsonObject
+        ?.getAsJsonObject("protocol")?.getAsJsonArray("operations")
+        ?.any { it.isJsonPrimitive && it.asString == operation } == true
 
     fun runDoctor(callback: (Result<String>) -> Unit) {
         val root = snapshot.kitRoot ?: return callback(Result.failure(IllegalStateException("未配置 Kit 根目录")))
@@ -265,7 +313,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
 
     override fun dispose() { disposed = true; vfsDebounce.getAndSet(null)?.cancel(); coroutineJobs.values.forEach { it.cancel() }; coroutineJobs.clear() }
 
-    data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val features: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null) {
+    data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val features: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null, val handoff: HandoffData? = null, val search: SearchData? = null, val selectedHandoff: String? = null, val selectedSearch: String? = null, val selectedRun: String? = null, val selectedRunsFilter: String? = null) {
         companion object { fun empty(root: String? = null, python: String? = null) = Snapshot(root, python, null, emptyList(), null, null) }
     }
     companion object {

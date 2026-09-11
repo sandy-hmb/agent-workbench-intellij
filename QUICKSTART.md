@@ -12,7 +12,7 @@
    * **Windows / Linux**：`File` ➔ `Settings...`（快捷键 `Ctrl + Alt + S`）
 2. 在左侧导航栏选择 **Plugins（插件）**；
 3. 点击右上角的 ⚙️ 齿轮图标，选择 **Install Plugin from Disk...（从磁盘安装插件）**；
-4. 选择本项目的构建包（如 `build/distributions/agent-workbench-intellij-0.2.zip`）；
+4. 选择本项目的构建包（如 `build/distributions/agent-workbench-intellij-0.3.zip`）；
 5. 安装完成后根据提示重启 IDE。
 
 ---

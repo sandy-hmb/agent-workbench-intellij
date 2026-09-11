@@ -2,6 +2,8 @@ package org.agentworkbench.intellij
 
 import com.google.gson.JsonParser
 import org.agentworkbench.intellij.kit.InspectProtocol
+import org.agentworkbench.intellij.kit.HandoffData
+import org.agentworkbench.intellij.kit.SearchData
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -53,5 +55,22 @@ class InspectConsumerContractTest {
             mutate(json)
             assertTrue("Malformed payload case $index was accepted", InspectProtocol.parse(json.toString(), "workspace", "/kit").isFailure)
         }
+    }
+
+    @Test
+    fun parsesHandoffAndSearchIntoSmallTypedModels() {
+        val handoff = javaClass.getResourceAsStream("/inspect-v1/handoff.json")!!.use {
+            JsonParser.parseString(it.readBytes().decodeToString()).asJsonObject
+        }
+        val handoffResponse = InspectProtocol.parse(handoff.toString(), "handoff", "/synthetic/kit").getOrThrow()
+        assertTrue(HandoffData.parse(handoffResponse.data).content.isNotBlank())
+        assertTrue(HandoffData.parse(handoffResponse.data).sources.isNotEmpty())
+
+        val search = javaClass.getResourceAsStream("/inspect-v1/search.json")!!.use {
+            JsonParser.parseString(it.readBytes().decodeToString()).asJsonObject
+        }
+        val searchResponse = InspectProtocol.parse(search.toString(), "search", "/synthetic/kit").getOrThrow()
+        assertTrue(SearchData.parse(searchResponse.data).query.isNotBlank())
+        assertTrue(!SearchData.parse(searchResponse.data).incomplete)
     }
 }
