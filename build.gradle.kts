@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "org.agentworkbench"
-version = "0.3"
+version = "0.4"
 
 repositories {
     mavenCentral()

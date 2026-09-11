@@ -54,6 +54,24 @@ class GitComparisonTest {
     }
 
     @Test
+    fun resolvesReviewRemoteFromRecordedBranchWithoutCheckingOutThatBranch() {
+        val root = Files.createTempDirectory("workbench-review-remote-").toFile()
+        git(root, "init", "-b", "main")
+        root.resolve("base.txt").writeText("base")
+        git(root, "add", ".")
+        git(root, "commit", "-m", "base")
+        git(root, "remote", "add", "origin", "git@github.com:acme/service.git")
+        git(root, "remote", "add", "personal", "git@github-personal:acme/service.git")
+        git(root, "config", "branch.feature/review.pushRemote", "personal")
+
+        val result = NativeGit().reviewRemote(root, "feature/review") as NativeGit.ReviewRemote.Resolved
+
+        assertEquals("personal", result.name)
+        assertEquals("git@github-personal:acme/service.git", result.url)
+        assertEquals("main", git(root, "branch", "--show-current").trim())
+    }
+
+    @Test
     fun refusesComparisonWhenBranchesHaveNoCommonAncestor() {
         val root = Files.createTempDirectory("workbench-git-").toFile()
         git(root, "init", "-b", "main")

@@ -42,7 +42,7 @@ import org.agentworkbench.intellij.ui.WorkbenchUi as U
 /** 需求分支的已提交变更不取决于实际检出的分支。 */
 internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLayout()),Disposable {
     private val repository=JComboBox<String>()
-    private val scope=U.column()
+    private val branchSummary=U.label("选择仓库后查看需求分支",11,U.muted)
     private val message=U.label("选择需求后查看记录分支的已提交变更",12,U.muted)
     private val files=DefaultListModel<String>()
     private val commits=DefaultListModel<String>()
@@ -95,6 +95,7 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
     private var generation=0
     private var future:Future<*>?=null
     private var disposed=false
+    private var updatingRepository=false
 
     private fun openSelectedFile(fileRelPath: String) {
         val root = selected?.first ?: return
@@ -141,7 +142,7 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
 
     init {
         background=U.bg;U.combo(repository)
-        add(U.column(18,U.row(U.flow(U.label("关联仓库",11,U.muted),repository),U.flow(fetchBtn,diff)),scope,message).apply { border=com.intellij.util.ui.JBUI.Borders.empty(22,0) },BorderLayout.NORTH)
+        add(U.column(8,U.row(U.flow(U.label("关联仓库",11,U.muted),repository),U.flow(fetchBtn,diff)),branchSummary,message).apply { border=com.intellij.util.ui.JBUI.Borders.empty(12,0,8,0) },BorderLayout.NORTH)
         val fileList=JBList(files).apply {
             background=U.bg;foreground=U.text;fixedCellHeight=32;border=com.intellij.util.ui.JBUI.Borders.empty(4);font=U.mono("").font
             emptyText.text = "暂无变更文件"
@@ -237,7 +238,7 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
             background = U.bg
         }
         add(splitter, BorderLayout.CENTER)
-        diff.isEnabled=false;repository.addActionListener { load() }
+        diff.isEnabled=false;repository.addActionListener { if(!updatingRepository) load() }
     }
     fun showFeature(feature:JsonObject,repositories:List<JsonObject>) {
         val newBindings = feature.getAsJsonObject("summary")?.getAsJsonArray("repositoryBindings")?.map { it.asJsonObject } ?: emptyList()
@@ -249,15 +250,19 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
         val newRepoNames = newBindings.mapNotNull { it.str("repository") }
         val existingItems = (0 until repository.itemCount).map { repository.getItemAt(it) }
 
-        if (existingItems != newRepoNames) {
-            repository.removeAllItems()
-            newRepoNames.forEach { repository.addItem(it) }
-            if (currentSelected != null && newRepoNames.contains(currentSelected)) {
+        updatingRepository=true
+        try {
+            if (existingItems != newRepoNames) {
+                repository.removeAllItems()
+                newRepoNames.forEach { repository.addItem(it) }
+                if (currentSelected != null && newRepoNames.contains(currentSelected)) {
+                    repository.selectedItem = currentSelected
+                }
+            } else if (currentSelected != null && repository.selectedItem != currentSelected) {
                 repository.selectedItem = currentSelected
             }
-        } else if (currentSelected != null && repository.selectedItem != currentSelected) {
-            repository.selectedItem = currentSelected
-        }
+        } finally { updatingRepository=false }
+        load()
     }
     private fun load() {
         future?.cancel(true);val request=++generation;selected=null;diff.isEnabled=false;files.clear();commits.clear()
@@ -265,13 +270,14 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
         val name=binding.str("repository")?:return;val root=roots[name]?:return
         val base=binding.str("baseBranch");val work=binding.str("workBranch")
         if(base==null||work==null) { message.text="需求未记录完整工作分支和基线";return }
+        branchSummary.text="$base → $work"
         message.text="正在比较 $name：$base → $work"
         future=ApplicationManager.getApplication().executeOnPooledThread {
             val git=NativeGit.forProject(project);val scene=git.snapshot(root.toFile())
             val comparison=runCatching { git.comparison(root.toFile(),base,work) }.getOrElse { NativeGit.Comparison.Unavailable(it.message?:"比较不可用") }
             ApplicationManager.getApplication().invokeLater {
                 if(disposed||generation!=request) return@invokeLater
-                scope.removeAll();U.append(scope,U.metrics(U.metric("记录基线",base),U.metric("需求分支",work),U.metric("实际检出",(scene as? NativeGit.Snapshot.Available)?.branch?:"不可用")))
+                branchSummary.text="$base → $work · 当前检出 ${(scene as? NativeGit.Snapshot.Available)?.branch?:"不可用"}"
                 when(comparison) {
                     is NativeGit.Comparison.Unavailable -> { message.text=comparison.reason;message.foreground=U.amber }
                     is NativeGit.Comparison.Available -> {

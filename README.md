@@ -37,7 +37,7 @@ IDEA / Rebased
 
 ### 安装开发包
 
-可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.3.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
+可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.4.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
 
 如需从源码构建，在本仓执行：
 
@@ -48,7 +48,7 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
   test buildPlugin
 ```
 
-安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.3`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
+安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.4`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
 
 ### 首次打开工作区
 
@@ -84,10 +84,17 @@ my-project-workspace/
 | 接手包 | 预览并复制当前任务、阶段、验证摘要和带版本来源，旧 Kit 自动回退兼容提示词 |
 | 历史检索 | 按关键词、仓库和状态搜索当前工作区的需求、设计、计划与验证记录 |
 | Feature 详情 | 概览、文档、计划、需求分支变更、当前工作目录、验证、流程和扩展 |
+| 代码评审 | 在 Feature“变更”中按已记录工作分支查找 GitHub PR 或 GitLab MR，并打开评审链接 |
 | 流程记录 | 按 Run 查看已有记录、配置匹配和结果，不会重新执行流程 |
 | 读取诊断 | 显示缺失 Kit、版本不兼容、损坏记录和单仓读取失败原因 |
 
 文档内容按需读取，支持渲染、原文、目录、搜索和任务原文定位。Markdown 中的脚本、远程图片和危险链接不会在插件内执行或自动加载。
+
+### 查询代码评审
+
+在 `Settings | Tools | Agent Workbench` 的“代码托管服务”配置 GitHub 或 GitLab 服务和读取 Token。Token 仅保存到 IDE 的密码库，工作区设置文件只保存服务地址和 SSH 主机别名。打开 Feature 的“变更”后，默认“代码评审”子页会依据该 Feature 已记录的仓库和工作分支查询同仓 PR/MR；手工创建、已关闭和已合并的评审同样可见。“需求分支已提交”和“当前工作目录”作为次级子页保留。
+
+GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab Token 需要 `read_api`。未配置服务、Token 无效、仓库权限不足和查询失败会在对应仓库行显示，不会被误报为“未找到 PR/MR”。首页和仓库列表不会查询评审。
 
 ## Git 操作边界
 

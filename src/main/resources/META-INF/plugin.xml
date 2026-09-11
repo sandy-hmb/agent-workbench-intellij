@@ -9,6 +9,7 @@
   <resource-bundle>messages.AgentWorkbenchBundle</resource-bundle>
   <extensions defaultExtensionNs="com.intellij">
     <projectService serviceImplementation="org.agentworkbench.intellij.WorkbenchService"/>
+    <projectService serviceImplementation="org.agentworkbench.intellij.review.FeatureReviewService"/>
     <toolWindow id="Agent Workbench" anchor="left" icon="org.agentworkbench.intellij.ui.WorkbenchIcons.ToolWindow" factoryClass="org.agentworkbench.intellij.ui.WorkbenchToolWindowFactory" canCloseContents="false"/>
     <fileEditorProvider implementation="org.agentworkbench.intellij.ui.WorkbenchFileEditorProvider"/>
     <projectConfigurable parentId="tools" id="org.agentworkbench.workbench.settings" displayName="Agent Workbench" instance="org.agentworkbench.intellij.ui.WorkbenchConfigurable"/>

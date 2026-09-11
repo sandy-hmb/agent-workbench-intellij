@@ -111,6 +111,12 @@ my-app-workspace/                         # 推荐用 IDEA 打开此根目录
   * 分支流向明确标注（例如：`develop ➔ feat/order-export`）；
   * 实时状态指示（`● 干净` 或 `3 个未提交变更`）。
 
+### 3.2.1 Feature 代码评审
+
+在 `Settings | Tools | Agent Workbench` 的“代码托管服务”添加 GitHub 或 GitLab 服务，再为每个服务保存只读 Token。Token 由 IDEA/Rebased 的密码库管理，`agent-workbench.xml` 不保存 Token。GitHub 建议使用只覆盖目标仓并授予 `Pull requests: Read` 的细粒度 Token；GitLab 使用具备 `read_api` 的 Token。
+
+打开 Feature 的“变更”后，默认显示“代码评审”子页，只查询该 Feature 已登记的仓库与工作分支。它不依赖当前检出分支，因此网页手动创建、已合并或已关闭的同仓 PR/MR 都可以显示。一个分支有多个候选评审时，插件要求选择，不自动猜测；没有评审、Token 权限不足和网络失败会显示为不同状态。需要使用 SSH 主机别名时，可在对应服务中配置，例如 `github-personal`。“需求分支已提交”和“当前工作目录”仍可从相邻子页按需查看。
+
 ### 3.3 代码变更与比对（跨仓差异视窗）
 在顶部子标签栏切换至 **「代码变更与比对」**：
 * **关联仓库切换**：支持下拉选择需求绑定的不同微服务仓，支持**持久记忆选中项**，后台刷新绝不跳回；

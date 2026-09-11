@@ -287,7 +287,7 @@ internal class FeatureDashboardPanel(
 
                 val rightActions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
                     isOpaque = false
-                    val viewDiffBtn = JButton("Diff 比对 →").apply {
+                    val viewDiffBtn = JButton("查看变更 →").apply {
                         font = font.deriveFont(10.5f)
                         foreground = JBColor(0x6B7280, 0x9CA3AF)
                         isBorderPainted = false

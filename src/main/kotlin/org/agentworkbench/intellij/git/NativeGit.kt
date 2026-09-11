@@ -22,6 +22,35 @@ internal class NativeGit(private val executable: String = "git") {
     }.getOrElse { Snapshot.Unavailable(it.message ?: "Git 现场不可读取") }
     fun remotes(root: File): List<String> = runCatching { requireRepositoryRoot(root); read(root, "remote").lines().filter(String::isNotBlank) }.getOrDefault(emptyList())
     fun lastCommitTime(root:File):String? = runCatching { requireRepositoryRoot(root);read(root,"log","-1","--format=%cI").trim().takeIf(String::isNotEmpty) }.getOrNull()
+    /** 使用 Feature 记录的分支推断评审所对应 remote；不依赖当前 checkout。 */
+    fun reviewRemote(root: File, workBranch: String, selectedRemote: String? = null): ReviewRemote = runCatching {
+        requireRepositoryRoot(root)
+        require(workBranch.isNotBlank() && workBranch.none { it.isISOControl() }) { "需求工作分支无效" }
+        val names = read(root, "remote").lines().filter(String::isNotBlank).distinct()
+        require(names.isNotEmpty()) { "仓库未配置 remote" }
+        val configured = listOfNotNull(
+            readOptional(root, "config", "--get", "branch.$workBranch.pushRemote"),
+            readOptional(root, "config", "--get", "remote.pushDefault"),
+            readOptional(root, "config", "--get", "branch.$workBranch.remote"),
+        ).firstOrNull()
+        val chosen = when {
+            selectedRemote != null -> {
+                require(selectedRemote in names) { "所选 remote 不存在" }
+                selectedRemote
+            }
+            configured != null -> {
+                require(configured in names) { "分支配置指向不存在的 remote" }
+                configured
+            }
+            "origin" in names -> "origin"
+            names.size == 1 -> names.single()
+            else -> return ReviewRemote.Choice(names)
+        }
+        val url = readOptional(root, "remote", "get-url", "--push", chosen)
+            ?: readOptional(root, "remote", "get-url", chosen)
+            ?: error("remote 未配置可用地址")
+        ReviewRemote.Resolved(chosen, url)
+    }.getOrElse { ReviewRemote.Unavailable(it.message ?: "无法解析评审 remote") }
     fun comparison(root: File, baseBranch: String, workBranch: String): Comparison {
         runCatching { requireRepositoryRoot(root) }.onFailure { return Comparison.Unavailable(it.message ?: "不是独立 Git 根") }
         // 基线分支优先匹配远程 origin/<base>，保证比对基准为团队最新；不存在时使用本地分支
@@ -73,7 +102,10 @@ internal class NativeGit(private val executable: String = "git") {
         require(top == root.canonicalFile) { "目录不是独立 Git 根：${root.path}" }
     }
 
-    private fun read(root: File, vararg arguments: String): String {
+    private fun readOptional(root: File, vararg arguments: String): String? =
+        runCatching { read(root, *arguments, logFailure = false) }.getOrNull()?.trim()?.takeIf(String::isNotEmpty)
+
+    private fun read(root: File, vararg arguments: String, logFailure: Boolean = true): String {
         if (Thread.currentThread().isInterrupted) throw IOException("Git 查询已取消")
         val process = ProcessBuilder(listOf(executable, "-C", root.canonicalPath, *arguments))
             .redirectErrorStream(true)
@@ -99,7 +131,7 @@ internal class NativeGit(private val executable: String = "git") {
             }
             val text = output.get(1, TimeUnit.SECONDS)
             if (process.exitValue() != 0) {
-                LOG.warn("git ${arguments.joinToString(" ")} 在 ${root.path} 退出码 ${process.exitValue()}：${text.take(2000)}")
+                if (logFailure) LOG.warn("git ${arguments.joinToString(" ")} 在 ${root.path} 退出码 ${process.exitValue()}")
                 error("Git 只读查询失败")
             }
             return text
@@ -122,6 +154,12 @@ internal class NativeGit(private val executable: String = "git") {
         ) : Comparison
 
         data class Unavailable(val reason: String) : Comparison
+    }
+
+    sealed interface ReviewRemote {
+        data class Resolved(val name: String, val url: String) : ReviewRemote
+        data class Choice(val names: List<String>) : ReviewRemote
+        data class Unavailable(val reason: String) : ReviewRemote
     }
 
     sealed interface Snapshot {

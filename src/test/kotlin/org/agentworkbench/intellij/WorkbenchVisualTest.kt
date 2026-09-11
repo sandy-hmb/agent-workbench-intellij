@@ -49,6 +49,12 @@ class WorkbenchVisualTest:BasePlatformTestCase() {
                 val nav=descendants(panel).filterIsInstance<JButton>().mapNotNull { it.name }
                 assertTrue(nav.toString(),nav.containsAll(listOf("nav-overview","nav-features","nav-runs","nav-extensions","nav-repo/service")))
                 paint(panel,"sample-feature")
+                tabs.selectedIndex=WorkbenchPanel.CHANGES
+                val changes=descendants(panel).filterIsInstance<WorkbenchTabs>().first { it.tabCount==3 }
+                assertEquals(listOf("代码评审","需求分支已提交","当前工作目录"),(0 until 3).map(changes::titleAt))
+                paint(panel,"sample-changes-review")
+                changes.selectedIndex=1
+                paint(panel,"sample-changes-committed")
                 tabs.selectedIndex=WorkbenchPanel.VERIFY
                 waitText(panel,"检查 1",contains=true)
                 paint(panel,"sample-verification")

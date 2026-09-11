@@ -6,6 +6,7 @@ import com.intellij.openapi.components.RoamingType
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
+import org.agentworkbench.intellij.review.ReviewHost
 import java.nio.file.Path
 
 @State(name = "AgentWorkbenchSettings", storages = [Storage(value = "agent-workbench.xml", roamingType = RoamingType.DISABLED)])
@@ -13,7 +14,7 @@ import java.nio.file.Path
 internal class WorkbenchSettings : PersistentStateComponent<WorkbenchSettings.Data> {
     data class Position(var key: String = "", var offset: Int = 0)
     data class Preference(
-        var root: String = "", var python: String = "python3", var query: String = "", var status: String = "全部", var tab: Int = 0, var run: String = "", var feature: String = "", var document: String = "", var positions: MutableList<Position> = mutableListOf(),
+        var root: String = "", var python: String = "python3", var query: String = "", var status: String = "全部", var tab: Int = 0, var run: String = "", var feature: String = "", var document: String = "", var positions: MutableList<Position> = mutableListOf(), var reviewHosts: MutableList<ReviewHost> = mutableListOf(),
     )
     data class Binding(var projectRoot: String = "", var kitRoot: String = "")
     data class Data(var preferences: MutableList<Preference> = mutableListOf(), var bindings: MutableList<Binding> = mutableListOf())
@@ -33,6 +34,10 @@ internal class WorkbenchSettings : PersistentStateComponent<WorkbenchSettings.Da
         preference.positions.removeIf { it.key == key }
         preference.positions += Position(key, offset)
         while (preference.positions.size > MAX_POSITIONS) preference.positions.removeAt(0)
+    }
+    fun reviewHosts(root: String): List<ReviewHost> = preference(root).reviewHosts.map { it.copy() }
+    fun replaceReviewHosts(root: String, hosts: List<ReviewHost>) {
+        preference(root).reviewHosts = hosts.map { it.copy() }.toMutableList()
     }
     fun kitForProject(projectRoot: String): String? = data.bindings.firstOrNull { it.projectRoot == canonical(projectRoot) }?.kitRoot
     fun rememberBinding(projectRoot: String, kitRoot: String) {

@@ -25,6 +25,8 @@ import org.agentworkbench.intellij.WorkbenchService
 import org.agentworkbench.intellij.WorkbenchSettings
 import org.agentworkbench.intellij.git.GitScanService
 import org.agentworkbench.intellij.git.NativeGit
+import org.agentworkbench.intellij.review.FeatureReviewService
+import org.agentworkbench.intellij.review.ReviewBinding
 import org.agentworkbench.intellij.kit.KitClient
 import org.agentworkbench.intellij.kit.HandoffData
 import org.agentworkbench.intellij.kit.SearchHit
@@ -39,6 +41,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private val service = WorkbenchService.getInstance(project)
     private val settings = WorkbenchSettings.getInstance()
     private val scanService = GitScanService.getInstance(project)
+    private val reviewService = FeatureReviewService.getInstance(project)
     private val contentPanel = JPanel(BorderLayout())
     private val emptyPanel = JPanel(GridBagLayout())
     private val sidebar = U.panel(BorderLayout())
@@ -83,6 +86,14 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         onOpenTask = { locateTask(it) },
         onOpenDoc = { openDocument(it) }
     )
+    private val featureReviewPanel = FeatureReviewPanel(
+        project = project,
+        onRefresh = { refreshReviews(force = true) },
+        onConfigure = { com.intellij.openapi.options.ShowSettingsUtil.getInstance().showSettingsDialog(project, WorkbenchConfigurable::class.java) },
+        onChooseRemote = { repository, remote -> reviewService.chooseRemote(repository, remote) },
+        onChooseCandidate = { repository, candidate -> reviewService.chooseCandidate(repository, candidate) },
+    )
+    private val featureChangesTabs = WorkbenchTabs()
     private val featureDoctorLabel = JLabel("环境检查中…", AllIcons.General.Information, JLabel.LEFT).apply {
         font = font.deriveFont(11f)
         foreground = U.muted
@@ -159,6 +170,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private var describeLoaded = false
     private var describeSummaries = emptyMap<String, String>()
     private var lastLocalReqKey: String? = null
+    private var lastReviewKey: String? = null
     private val pendingKit = mutableSetOf<String>()
     // VFS 监听是主要刷新信号；定时器只作兜底（VFS 漏报、外部工具直写等），30 秒全量轮询会反复起 Python 进程。
     private val refreshTimer = Timer(300_000) { reload() }
@@ -309,11 +321,13 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             add(U.row(planTitle, U.flow(taskFilter, locateTaskBtn, openTaskInEditorBtn)).apply { border = JBUI.Borders.empty(24,0,16,0) }, BorderLayout.NORTH)
             add(U.scroll(taskTable))
         }
-        val changesPanel = WorkbenchTabs().apply { addTab("需求分支已提交", committedChanges); addTab("当前工作目录", workingGit) }
+        featureChangesTabs.addTab("代码评审", U.page(U.padded(featureReviewPanel) as JPanel))
+        featureChangesTabs.addTab("需求分支已提交", committedChanges)
+        featureChangesTabs.addTab("当前工作目录", workingGit)
 
         tabs.addTab("文档", docPanel)
         tabs.addTab("计划", planPanel)
-        tabs.addTab("变更", changesPanel)
+        tabs.addTab("变更", featureChangesTabs)
         tabs.addTab("验证", U.page(verificationBody))
         tabs.addTab("流程", U.panel().apply { add(U.row(U.flow(U.label("运行记录",11,U.muted), runPicker), runStatus).apply { border = JBUI.Borders.empty(22,0,20,0) }, BorderLayout.NORTH); add(U.page(workflowBody)) })
 
@@ -353,7 +367,14 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         U.append(diagnosticsPage, U.section("工作区健康（doctor）"), 28)
         U.append(diagnosticsPage, doctorBody, 4)
         pages.add(U.page(U.padded(diagnosticsPage) as JPanel), "diagnostics")
-        tabs.onChange = { if (!changing) { remember(); loadVisible() } }
+        tabs.onChange = { if (!changing) {
+            if (tabs.selectedIndex != CHANGES) { lastReviewKey=null; reviewService.invalidate() }
+            remember(); loadVisible()
+        } }
+        featureChangesTabs.onChange = { if (!changing) {
+            if (featureChangesTabs.selectedIndex != REVIEW_CHANGES) { lastReviewKey=null; reviewService.invalidate() }
+            loadVisible()
+        } }
         search.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
             override fun textChanged(e: javax.swing.event.DocumentEvent) { filterFeatures(); remember() }
         })
@@ -424,6 +445,10 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                 }
             }
         }
+        reviewService.subscribe(this) { rows -> if (!disposed) {
+            if (rows.isEmpty()) lastReviewKey=null
+            featureReviewPanel.render(rows)
+        } }
         project.messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
                 val roots = repositories().mapNotNull { it.str("absolutePath") }
@@ -455,7 +480,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         if(disposed) return
         val next = service.snapshot(); val changedRoot = state.kitRoot != next.kitRoot; state = next
         (layout as? CardLayout)?.show(this, if (state.kitRoot.isNullOrBlank()) "EMPTY" else "CONTENT")
-        if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; businessReposExpanded=false; describeLoaded=false; describeSummaries=emptyMap(); lastLocalReqKey=null; pendingKit.clear(); historyModel.clear(); historyCount.text="输入关键词后搜索当前工作区的历史文档"; restore() }
+        if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; businessReposExpanded=false; describeLoaded=false; describeSummaries=emptyMap(); lastLocalReqKey=null;lastReviewKey=null;reviewService.invalidate(); pendingKit.clear(); historyModel.clear(); historyCount.text="输入关键词后搜索当前工作区的历史文档"; restore() }
         overviewPath.text=state.kitRoot ?: "在侧栏入口绑定工作流 Kit"
         workspaceName.text = state.workspace?.data.obj()?.get("identity").obj()?.str("name") ?: "研发工作区"
         workspacePath.text = state.kitRoot?.let { Path.of(it).fileName.toString() } ?: "尚未绑定 Kit"
@@ -692,9 +717,9 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         return U.row(left,progress).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(17,0)); name="feature-${item.str("slug")}" }
     }
     fun selectFeature(slug:String) {
-        selectedSlug=slug;selectedDocument=null;checkedFeatureRevision=null;verificationData=null;detailData=null;tasks=emptyList();files=emptyList();lastLocalReqKey=null;renderTasks()
+        selectedSlug=slug;selectedDocument=null;checkedFeatureRevision=null;verificationData=null;detailData=null;tasks=emptyList();files=emptyList();lastLocalReqKey=null;lastReviewKey=null;reviewService.invalidate();renderTasks()
         featureHeader.removeAll();featureOverview.removeAll();U.append(featureOverview,U.empty("正在读取需求…",slug));navigate("feature")
-        changing=true;tabs.selectedIndex=SUMMARY;changing=false;remember()
+        changing=true;tabs.selectedIndex=SUMMARY;featureChangesTabs.selectedIndex=REVIEW_CHANGES;changing=false;remember()
         service.loadFeature(slug) { result ->
             if(disposed||selectedSlug!=slug) return@loadFeature
             val data=result.detail?.data.obj()
@@ -963,6 +988,25 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                 featureDashboard.setRequirementsContent(reqPath, remoteContent)
             }
         }
+    }
+
+    private fun refreshReviews(force: Boolean = false) {
+        val data = detailData ?: return
+        val summary = data.get("summary").obj() ?: return
+        refreshReviews(summary.str("slug").orEmpty(), summary, repositoryRoots(repositories()), force)
+    }
+
+    private fun refreshReviews(slug: String, summary: JsonObject, repoRoots: Map<String, Path>, force: Boolean = false) {
+        if (route != "feature" || tabs.selectedIndex != CHANGES || featureChangesTabs.selectedIndex != REVIEW_CHANGES || slug.isBlank()) return
+        val root = state.kitRoot ?: return
+        val bindings = summary.objects("repositoryBindings").mapNotNull { binding ->
+            val repository = binding.str("repository") ?: return@mapNotNull null
+            ReviewBinding(repository, repoRoots[repository], binding.str("workBranch"))
+        }
+        val key = listOf(root, slug, *bindings.map { "${it.repository}:${it.root}:${it.workBranch}" }.toTypedArray()).joinToString("\u0000")
+        if (!force && key == lastReviewKey) return
+        lastReviewKey = key
+        reviewService.refresh(root, slug, bindings)
     }
 
     private fun renderTasks() {
@@ -1343,7 +1387,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             "runs" -> { showWorkflowLoading(); queryWorkflow() }
             "extensions" -> { showWorkflowLoading(); queryWorkflow(); runDescribe() }
             "diagnostics" -> runDoctor()
-            "feature" -> when(tabs.selectedIndex) { DOCUMENTS -> (selectedDocument ?: docPanel.activePath)?.let { openDocument(it) };VERIFY -> queryVerification();WORKFLOW -> { showWorkflowLoading(); queryWorkflow() } }
+            "feature" -> when(tabs.selectedIndex) { CHANGES -> if(featureChangesTabs.selectedIndex==REVIEW_CHANGES) refreshReviews(); DOCUMENTS -> (selectedDocument ?: docPanel.activePath)?.let { openDocument(it) };VERIFY -> queryVerification();WORKFLOW -> { showWorkflowLoading(); queryWorkflow() } }
         }
     }
     private fun showWorkflowLoading() {
@@ -1580,6 +1624,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         const val DOCUMENTS = 1
         const val PLAN = 2
         const val CHANGES = 3
+        const val REVIEW_CHANGES = 0
         const val VERIFY = 4
         const val WORKFLOW = 5
     }
