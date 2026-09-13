@@ -72,6 +72,9 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
                         PlatformTestUtil.waitWithEventsDispatching("文档正文", { service.snapshot().document!=null },10)
                         settle(panel);capture(panel,"crm-document-$theme")
                         tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.VERIFY
+                        PlatformTestUtil.waitWithEventsDispatching("v2 验证已显示", {
+                            descendants(panel).filterIsInstance<javax.swing.JLabel>().any { it.text?.contains("检查 1") == true }
+                        },10)
                         settle(panel);capture(panel,"crm-verification-$theme")
                         tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.WORKFLOW
                         PlatformTestUtil.waitWithEventsDispatching("流程数据", { service.snapshot().workflow!=null },10)

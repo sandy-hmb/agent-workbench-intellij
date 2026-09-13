@@ -31,6 +31,7 @@ internal class GitScanService(private val project: Project) : Disposable {
     fun subscribe(parent: Disposable, listener: Listener) {
         listeners.add(listener)
         Disposer.register(parent) { listeners.remove(listener) }
+        listener.updated(scans, scanning)
     }
 
     /** 由 EDT 调用；仓库清单来自工作区登记，扫描在后台执行。 */
