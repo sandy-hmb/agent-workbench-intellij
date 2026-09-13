@@ -31,13 +31,13 @@ IDEA / Rebased
 ### 前置条件
 
 - IntelliJ IDEA 2025.2（Build 252）或 Rebased 1.1.12（Build 262）及兼容版本。
-- Kit 版本 `1.3.0` 或更高版本。`1.3.0` 开始提供插件所需的 `inspect` 查询接口。
+- Kit 版本 `1.6.3` 或更高版本。插件只支持 `task-evidence-v2` 验证视图。
 - 可执行的 Python 3，通常是 `python3`。
 - 当前项目为受信任项目，并已安装宿主自带的 Git 支持。
 
 ### 安装开发包
 
-可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.4.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
+可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.4.1.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
 
 如需从源码构建，在本仓执行：
 
@@ -48,7 +48,7 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
   test buildPlugin
 ```
 
-安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.4`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
+安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.4.1`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
 
 ### 首次打开工作区
 

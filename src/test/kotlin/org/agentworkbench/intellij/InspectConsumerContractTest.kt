@@ -18,6 +18,14 @@ class InspectConsumerContractTest {
           "kitVersion":"1.0","operations":["workspace","features"],"limits":{}}},
       "diagnostics":[]
     }"""
+    private val v2Verification = """{
+      "apiVersion":{"major":1,"minor":1},"operation":"verification","status":"ok",
+      "root":"/kit","revision":"sha256:${"b".repeat(64)}","observedAt":"2026-09-13T10:00:00Z",
+      "data":{"slug":"demo","featureRevision":"sha256:${"c".repeat(64)}","batches":[],
+        "selectedBatch":{"id":"sha256:${"d".repeat(64)}","recordedAt":"2026-09-13T10:00:00Z",
+          "recordedResult":"passed","recordedReview":"passed","completeness":"complete","checks":[]},
+        "repositoryStates":[],"applicability":"not_checked"},"diagnostics":[]
+    }"""
 
     @Test
     fun acceptsCompatibleMinorAndUnknownOptionalFields() {
@@ -55,6 +63,18 @@ class InspectConsumerContractTest {
             mutate(json)
             assertTrue("Malformed payload case $index was accepted", InspectProtocol.parse(json.toString(), "workspace", "/kit").isFailure)
         }
+    }
+
+    @Test
+    fun validatesV2SelectedBatchFieldsUsedByTheUi() {
+        assertTrue(InspectProtocol.parse(v2Verification, "verification", "/kit").isSuccess)
+        assertTrue(
+            InspectProtocol.parse(
+                v2Verification.replace("\"recordedResult\":\"passed\",", ""),
+                "verification",
+                "/kit",
+            ).isFailure,
+        )
     }
 
     @Test

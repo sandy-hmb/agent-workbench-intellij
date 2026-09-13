@@ -853,11 +853,11 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             val trustedDone = if (isTrustedApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: completedCount else null
             val untrustedCount = if (isTrustedApplicable && trustedDone != null && completedCount > trustedDone) completedCount - trustedDone else 0
 
-            if (completionPolicy == "task-evidence-v1") {
-                val policyPill = JLabel("凭据门禁").apply {
+            if (completionPolicy == "task-evidence-v2") {
+                val policyPill = JLabel("结构化证据").apply {
                     font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
                     foreground = com.intellij.ui.JBColor(0x047857, 0x10B981)
-                    toolTipText = "采用 task-evidence-v1 策略，任务需具备有效执行/验证凭据"
+                    toolTipText = "采用 task-evidence-v2 策略，任务需具备有效执行/验证凭据"
                     border = BorderFactory.createCompoundBorder(
                         BorderFactory.createLineBorder(com.intellij.ui.JBColor(0xA7F3D0, 0x064E3B), 1),
                         JBUI.Borders.empty(3, 8)
@@ -1167,7 +1167,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         verificationBody.removeAll(); verificationBody.border=JBUI.Borders.empty(26,0,20,0)
         val data=verificationData;val batch=data?.get("selectedBatch").obj()
         U.append(verificationBody,U.metrics(U.metric("上次检查结果",U.state(batch?.str("recordedResult")),"${batch?.str("recordedAt")?:"尚无验证批次"} · ${batch?.objects("checks")?.size?:0} 项检查",U.stateColor(batch?.str("recordedResult")),true),U.metric("对当前代码是否有效",U.state(data?.str("applicability")),if(checkingCode) "正在核对当前代码…" else "记录完整性：${U.state(batch?.str("completeness"))}",U.stateColor(data?.str("applicability")),true)))
-        U.append(verificationBody,U.section("检查证据",U.flow(U.button("查看批次原文") { showDocument("testing/verification.md") },U.button("核对当前代码") { queryVerification(true) })),24)
+        U.append(verificationBody,U.section("检查证据",U.flow(U.button("查看验证摘要") { showDocument("testing/verification.md") },U.button("核对当前代码") { queryVerification(true) })),24)
         batch?.objects("checks")?.forEach { check ->
             val passed=check.str("exitStatus")=="0"
             val title=U.row(U.column(6,U.label("${if(passed) "✓" else "!"}  检查 ${check.str("id")}",13,bold=true),U.mono(check.str("workingDirectory")?:"工作目录未记录")),U.flow(U.label("退出 ${check.str("exitStatus")?:"未记录"}",11,if(passed) U.green else U.red),U.label(check.str("duration")?:"耗时未记录",10,U.faint)))
@@ -1200,7 +1200,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                         U.row(U.label("任务 $taskId", 12, bold = true), stateBadge),
                         U.mono(rangeText, U.muted)
                     ),
-                    U.button("查看凭据原文") { showDocument(path, startLine) }
+                    null
                 )
                 val content = if (diags.isNotEmpty()) {
                     U.column(6,
@@ -1226,17 +1226,14 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         val batches = data?.objects("batches").orEmpty()
         if (batches.size > 1) {
             val selectedId = batch?.str("id")
-            U.append(verificationBody, U.section("历史验证批次", U.label("共 ${batches.size} 批 · 点击查看记录原文", 11, U.faint)), 26)
+            U.append(verificationBody, U.section("历史验证批次", U.label("共 ${batches.size} 批", 11, U.faint)), 26)
             batches.asReversed().forEach { item ->
-                val source = item.get("source").obj()
-                val sourcePath = source?.str("path") ?: "testing/verification.md"
-                val startLine = source?.str("startLine")?.toIntOrNull()
                 val isSelected = item.str("id") != null && item.str("id") == selectedId
                 val row = U.row(
                     U.column(4,
                         U.flow(*listOfNotNull(U.label(item.str("recordedAt") ?: "未记录时间", 12, bold = isSelected), if (isSelected) U.badge("当前展示") else null).toTypedArray()),
                         U.mono(item.str("id")?.take(32).orEmpty(), U.faint)),
-                    U.button("查看原文", true) { showDocument(sourcePath, startLine) }
+                    null
                 )
                 U.append(verificationBody, row.apply { border = BorderFactory.createCompoundBorder(BottomLine(U.border), JBUI.Borders.empty(10, 0)) }, 6)
             }

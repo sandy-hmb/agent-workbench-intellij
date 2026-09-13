@@ -146,7 +146,13 @@ internal object InspectProtocol {
         "feature" -> { data.requiredObject("summary"); data.requiredArray("tasks"); data.requiredArray("files"); data.requiredArray("artifacts"); data.requiredObject("progression"); data.requiredString("featureRevision") }
         "handoff" -> { data.requiredObject("progression"); data.requiredString("featureRevision"); HandoffData.parse(data) }
         "document" -> { data.requiredString("path"); data.requiredString("revision"); data.requiredString("content") }
-        "verification" -> { data.requiredString("slug"); data.requiredString("featureRevision"); data.requiredArray("batches"); data.requiredArray("repositoryStates"); data.requiredString("applicability") }
+        "verification" -> {
+            data.requiredString("slug"); data.requiredString("featureRevision"); data.requiredArray("batches"); data.requiredArray("repositoryStates"); data.requiredString("applicability")
+            data.get("selectedBatch")?.takeUnless(JsonElement::isJsonNull)?.let {
+                val batch = it.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: error("Inspect selectedBatch 格式无效")
+                batch.requiredString("id"); batch.requiredString("recordedAt"); batch.requiredString("recordedResult"); batch.requiredString("recordedReview"); batch.requiredString("completeness"); batch.requiredArray("checks")
+            }
+        }
         "workflow" -> { data.requiredString("configState"); data.requiredArray("extensions") }
         "run" -> { data.requiredString("id"); data.requiredArray("records") }
         else -> error("不支持的 operation")
