@@ -117,7 +117,7 @@ GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab T
 
 ### 提示“Inspect 信封格式无效”
 
-这是旧 Kit 不支持 `inspect` 时的旧版提示。升级绑定的工作流仓到 `1.3.0` 或更高版本，然后重新点击“绑定并刷新”：
+这是旧 Kit 不支持当前 v2 验证投影时的提示。升级绑定的工作流仓到 `1.6.3` 或更高版本，然后重新点击“绑定并刷新”：
 
 ```bash
 cd /path/to/agent-workbench
