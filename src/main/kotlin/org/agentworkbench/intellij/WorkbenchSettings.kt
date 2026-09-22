@@ -14,7 +14,7 @@ import java.nio.file.Path
 internal class WorkbenchSettings : PersistentStateComponent<WorkbenchSettings.Data> {
     data class Position(var key: String = "", var offset: Int = 0)
     data class Preference(
-        var root: String = "", var python: String = "python3", var query: String = "", var status: String = "全部", var tab: Int = 0, var run: String = "", var feature: String = "", var document: String = "", var positions: MutableList<Position> = mutableListOf(), var reviewHosts: MutableList<ReviewHost> = mutableListOf(),
+        var root: String = "", var python: String = "python3", var query: String = "", var status: String = "未完成", var incompleteDefaultApplied: Boolean = false, var tab: Int = 0, var run: String = "", var feature: String = "", var document: String = "", var positions: MutableList<Position> = mutableListOf(), var reviewHosts: MutableList<ReviewHost> = mutableListOf(),
     )
     data class Binding(var projectRoot: String = "", var kitRoot: String = "")
     data class Data(var preferences: MutableList<Preference> = mutableListOf(), var bindings: MutableList<Binding> = mutableListOf())
@@ -27,6 +27,14 @@ internal class WorkbenchSettings : PersistentStateComponent<WorkbenchSettings.Da
     fun preference(root: String): Preference {
         val canonical = canonical(root)
         return data.preferences.firstOrNull { it.root == canonical } ?: Preference(root = canonical).also { data.preferences += it }
+    }
+
+    fun featureStatus(root: String): String = preference(root).let {
+        if (!it.incompleteDefaultApplied) {
+            if (it.status == "全部") it.status = "未完成"
+            it.incompleteDefaultApplied = true
+        }
+        it.status
     }
 
     fun rememberPosition(root: String, key: String, offset: Int) {

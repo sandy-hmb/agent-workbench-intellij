@@ -63,6 +63,7 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
             }
         }
     }
+    private val tableScroll = WorkbenchUi.scroll(table)
     private val status = JBLabel("按工作区配置显示仓库；双击查看 Log，右键执行 Git 操作。")
     private val search = SearchTextField(false)
     private var entries = emptyList<GitScanService.Scan>()
@@ -107,13 +108,15 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
         table.emptyText.text = "暂无仓库"
         (search.textEditor as? JBTextField)?.emptyText?.text = "搜索仓库"
         search.preferredSize = java.awt.Dimension(com.intellij.util.ui.JBUI.scale(200), com.intellij.util.ui.JBUI.scale(30))
-        add(WorkbenchUi.row(WorkbenchUi.label("仓库",14,bold=true),WorkbenchUi.flow(scope,search)).apply { border=com.intellij.util.ui.JBUI.Borders.empty(0,0,12,0) }, BorderLayout.NORTH)
         WorkbenchUi.combo(scope);status.foreground=WorkbenchUi.muted
-        add(WorkbenchUi.scroll(table))
-        add(WorkbenchUi.column(6,
-            WorkbenchUi.flow(logAction,diffAction,commitAction,pushAction,pullAction,branchesAction,fetchAction).apply { border=com.intellij.util.ui.JBUI.Borders.emptyTop(8) },
-            WorkbenchUi.padded(status,2,0,0,0)
-        ), BorderLayout.SOUTH)
+        add(WorkbenchUi.column(0,
+            WorkbenchUi.row(WorkbenchUi.label("仓库",14,bold=true),WorkbenchUi.flow(scope,search)).apply { border=com.intellij.util.ui.JBUI.Borders.empty(0,0,12,0) },
+            tableScroll,
+            WorkbenchUi.column(6,
+                WorkbenchUi.flow(logAction,diffAction,commitAction,pushAction,pullAction,branchesAction,fetchAction).apply { border=com.intellij.util.ui.JBUI.Borders.emptyTop(8) },
+                WorkbenchUi.padded(status,2,0,0,0)
+            )
+        ), BorderLayout.NORTH)
         search.accessibleContext.accessibleName = "筛选 Git 仓库"
         scope.addActionListener { render() }
         table.addMouseListener(object:java.awt.event.MouseAdapter(){
@@ -157,6 +160,7 @@ internal class GitPanel(private val project: Project) : JPanel(BorderLayout()), 
             3 -> entry.id in related
             else -> true
         } }
+        tableScroll.preferredSize = java.awt.Dimension(1, table.tableHeader.preferredSize.height + table.rowHeight * visibleEntries.size.coerceIn(1, 5))
 
         val currentFingerprint = buildString {
             append(scope.selectedIndex).append(';')

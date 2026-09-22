@@ -76,7 +76,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private val featureModel = DefaultListModel<JsonObject>()
     private val featureList = JBList(featureModel)
     private val search = SearchTextField()
-    private val lifecycle = JComboBox(arrayOf("全部", "待评审", "planning", "development", "testing", "paused", "done"))
+    private val lifecycle = JComboBox(arrayOf("未完成", "全部", "待评审", "planning", "development", "testing", "paused", "done"))
     private val repoFilter = JComboBox(arrayOf("全部仓库"))
     private val sort = JComboBox(arrayOf("最近更新", "名称"))
     private val featureHeader = U.column()
@@ -239,8 +239,8 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         U.append(overviewBody, twoColumns(ongoing, overviewAttention, 300), 28)
         pages.add(overviewScrollPane, "overview")
 
-        U.append(featuresPage, pageHeader("Feature 工作台", "浏览全部需求与历史记录"))
-        lifecycle.renderer = object : DefaultListCellRenderer() { override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, selected: Boolean, focus: Boolean): Component = super.getListCellRendererComponent(list, if(value == "全部") value else U.status(value?.toString()), index, selected, focus) }
+        U.append(featuresPage, pageHeader("Feature 工作台", "需求与历史记录"))
+        lifecycle.renderer = object : DefaultListCellRenderer() { override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, selected: Boolean, focus: Boolean): Component = super.getListCellRendererComponent(list, if(value == "未完成" || value == "全部") value else U.status(value?.toString()), index, selected, focus) }
         val tools = U.row(search, U.flow(lifecycle, repoFilter, sort)).apply { border = JBUI.Borders.empty(24,0,16,0) }
         search.textEditor.emptyText.text = "搜索需求名称或标识..."
         search.textEditor.accessibleContext.accessibleName = "搜索需求"
@@ -332,7 +332,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         tabs.addTab("流程", U.panel().apply { add(U.row(U.flow(U.label("运行记录",11,U.muted), runPicker), runStatus).apply { border = JBUI.Borders.empty(22,0,20,0) }, BorderLayout.NORTH); add(U.page(workflowBody)) })
 
         val featureNorth = U.column(4, featureHeader, featureDoctorStrip)
-        pages.add(U.padded(U.panel().apply { add(featureNorth, BorderLayout.NORTH); add(tabs) }), "feature")
+        pages.add(U.page(U.padded(U.panel().apply { add(featureNorth, BorderLayout.NORTH); add(tabs) })), "feature")
         pages.add(U.page(U.padded(globalRuns) as JPanel), "runs")
         pages.add(U.page(U.padded(globalExtensions) as JPanel), "extensions")
         historySearch.textEditor.emptyText.text = "搜索需求、设计、计划或验证记录..."
@@ -551,9 +551,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             append(pending).append(';')
             append(values.sumOf { it.changes }).append(';')
             append(allAttention.joinToString(",")).append(';')
-            state.features.filter { it.str("status") != "done" }.take(5).forEach {
-                append(it.str("slug")).append(':').append(it.str("status")).append(':').append(it.get("planSummary").obj()?.str("completed")).append(';')
-            }
+            state.features.filter { it.str("status") != "done" }.take(5).forEach { append(it).append(';') }
         }
         if (summaryFingerprint == lastWorkspaceSummaryFingerprint && overviewMetrics.componentCount > 0) {
             return
@@ -623,6 +621,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         val query=search.text.trim()
         val statusMatch: (JsonObject) -> Boolean = { feat ->
             when (lifecycle.selectedItem) {
+                "未完成" -> feat.str("status") != "done"
                 "全部" -> true
                 "待评审" -> KitSemantics.reviewPending(feat.get("documentReviews").obj()?.str("plan"))
                 else -> feat.str("status") == lifecycle.selectedItem
@@ -632,7 +631,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         rows=if(sort.selectedIndex==0) rows.sortedByDescending { it.str("lastUpdated") } else rows.sortedBy { it.str("title") }
 
         val currentFingerprint = "${lifecycle.selectedItem}:${repoFilter.selectedItem}:${sort.selectedIndex}:$query;" +
-            rows.joinToString(";") { "${it.str("slug")}:${it.str("status")}:${it.str("lastUpdated")}" }
+            rows.joinToString(";")
         if (currentFingerprint == lastFeatureFilterFingerprint && featureModel.size == rows.size) {
             return
         }
@@ -650,7 +649,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         if (savedScroll != null) {
             SwingUtilities.invokeLater { scrollViewport?.viewPosition = savedScroll }
         }
-        featureCount.text="${rows.size} 个需求 · 已加载 ${state.features.size} 个"
+        featureCount.text="${rows.size} 个需求 · 已完成 ${state.features.count { it.str("status") == "done" }} 个"
         featureList.revalidate(); featureList.repaint()
     }
     private fun searchHistory() {
@@ -799,6 +798,12 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             val refreshBtn = U.button("刷新") { reload() }.apply {
                 icon = AllIcons.Actions.Refresh
             }
+            val completionBlocker = WorkbenchService.completionBlocker(summary)
+            if (status == "testing") add(U.button("标记完成") { completeFeature(slug, completedCount, totalCount) }.apply {
+                icon = AllIcons.Vcs.CommitNode
+                toolTipText = completionBlocker ?: "确认验收完成，并将需求状态从测试中更新为已完成"
+                isEnabled = completionBlocker == null
+            })
             add(copyPromptBtn)
             add(openDocBtn)
             add(locateBtn)
@@ -913,6 +918,28 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         selectedDocument = docPanel.activePath ?: selectedDocument ?: files.firstOrNull()?.str("path")
         changing = false
         featureHeader.revalidate(); featureHeader.repaint(); editorTitle.text = title; loadVisible()
+    }
+
+    private fun completeFeature(slug: String, completed: Int, total: Int) {
+        val progress = if (total > 0) "当前计划进度为 $completed/$total。\n\n" else ""
+        if (com.intellij.openapi.ui.Messages.showYesNoDialog(
+                project,
+                "${progress}确认该需求已验收完成？此操作会将状态从“测试中”更新为“已完成”。",
+                "标记 Feature 完成",
+                com.intellij.openapi.ui.Messages.getQuestionIcon(),
+            ) != com.intellij.openapi.ui.Messages.YES
+        ) return
+        service.completeFeature(slug) { result ->
+            result.fold(
+                onSuccess = {
+                    WorkbenchNotifier.info(project, "Feature 已完成", slug)
+                    lifecycle.selectedItem = "未完成"
+                    navigate("features")
+                    reload()
+                },
+                onFailure = { WorkbenchNotifier.warn(project, "标记完成失败", it.message ?: "未知错误") },
+            )
+        }
     }
 
     /** progression.nextActions：工作流对「下一步该做什么」的建议，附操作指引 runbook 入口。 */
@@ -1398,7 +1425,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         if(route=="feature") restoreFeature()
     }
     private fun remember() { if(!changing) state.kitRoot?.let { settings.preference(it).apply { query=search.text;status=lifecycle.selectedItem.toString();tab=tabs.selectedIndex;feature=selectedSlug.orEmpty();document=selectedDocument.orEmpty();run=runPicker.selectedItem?.toString().orEmpty() } } }
-    private fun restore() { state.kitRoot?.let { settings.preference(it).let { saved -> changing=true;search.text=saved.query;lifecycle.selectedItem=saved.status;selectedSlug=saved.feature.takeIf(String::isNotBlank);selectedDocument=saved.document.takeIf(String::isNotBlank);tabs.selectedIndex=saved.tab.coerceIn(0,tabs.tabCount-1);changing=false } } }
+    private fun restore() { state.kitRoot?.let { root -> settings.preference(root).let { saved -> changing=true;search.text=saved.query;lifecycle.selectedItem=settings.featureStatus(root);selectedSlug=saved.feature.takeIf(String::isNotBlank);selectedDocument=saved.document.takeIf(String::isNotBlank);tabs.selectedIndex=saved.tab.coerceIn(0,tabs.tabCount-1);changing=false } } }
     private fun restoreFeature() { selectedSlug?.let { slug -> service.loadFeature(slug) { latest -> if(!disposed&&selectedSlug==slug) {
         if(latest.error!=null) { notice.text="读取失败：${latest.error}，保留上次成功内容";notice.isVisible=true }
         else latest.detail?.data.obj()?.takeIf { it.get("summary").obj()?.str("slug")==slug }?.let { state=latest;showFeature(it) }

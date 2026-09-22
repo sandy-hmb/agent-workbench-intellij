@@ -54,7 +54,7 @@ intellijPlatform {
         id.set("org.agentworkbench.workbench")
         name.set("Agent Workbench")
         version.set(project.version.toString())
-        description.set("Agent Workbench provides a local read-only workspace and multi-repository Git workbench. 在 IntelliJ Platform 中查看工作区、需求和原生 Git 入口。")
+        description.set("Agent Workbench provides a local workflow and multi-repository Git workbench. 在 IntelliJ Platform 中查看工作区与需求，并可确认完成测试中的 Feature。")
         ideaVersion {
             sinceBuild.set("252")
             untilBuild.set("262.*")

@@ -6,6 +6,7 @@ import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 
 class KitClientErrorTest {
     @Test fun oldKitCommandFailureExplainsMissingInspectInsteadOfInvalidEnvelope() {
@@ -46,5 +47,32 @@ class KitClientErrorTest {
         val result = KitClient(java.nio.file.Path.of("/usr/bin/python3"), root).inspect("workspace")
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message?.contains("INSPECT_NOT_FOUND") == true)
+    }
+
+    @Test fun completeFeatureUsesTheFixedDoneTransition() {
+        val root = Files.createTempDirectory("workbench-complete-feature-")
+        try {
+            Files.createDirectories(root.resolve("scripts"))
+            Files.writeString(root.resolve("scripts/kit.py"), """
+                import json, pathlib, sys
+                pathlib.Path('arguments.json').write_text(json.dumps(sys.argv[1:]))
+                print('updated')
+            """.trimIndent())
+            val result = KitClient(Path.of("/usr/bin/python3"), root).completeFeature("demo-feature")
+            assertTrue(result.isSuccess)
+            assertEquals(
+                listOf("feature", "set-status", "demo-feature", "done"),
+                com.google.gson.JsonParser.parseString(Files.readString(root.resolve("arguments.json"))).asJsonArray.map { it.asString },
+            )
+        } finally { root.toFile().deleteRecursively() }
+    }
+
+    @Test fun completeFeatureDoesNotTreatFeatureErrorsAsSuccess() {
+        val root = Files.createTempDirectory("workbench-complete-feature-error-")
+        try {
+            Files.createDirectories(root.resolve("scripts"))
+            Files.writeString(root.resolve("scripts/kit.py"), "import sys; print('invalid feature'); sys.exit(1)")
+            assertTrue(KitClient(Path.of("/usr/bin/python3"), root).completeFeature("demo-feature").isFailure)
+        } finally { root.toFile().deleteRecursively() }
     }
 }

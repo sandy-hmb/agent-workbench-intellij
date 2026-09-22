@@ -7,6 +7,18 @@ import java.nio.file.Files
 import org.agentworkbench.intellij.ui.WorkbenchToolWindowFactory
 
 class WorkbenchSettingsTest {
+    @Test fun defaultsFeatureListToIncomplete() {
+        val root = Files.createTempDirectory("workbench-default-filter")
+        val settings = WorkbenchSettings()
+        assertEquals("未完成", settings.featureStatus(root.toString()))
+        settings.preference(root.toString()).status = "全部"
+        assertEquals("全部", settings.featureStatus(root.toString()))
+
+        val explicit = Files.createTempDirectory("workbench-explicit-filter")
+        settings.preference(explicit.toString()).status = "testing"
+        assertEquals("testing", settings.featureStatus(explicit.toString()))
+    }
+
     @Test fun isolatesRootsAndBoundsReadingPositions() {
         val settings = WorkbenchSettings()
         val first = Files.createTempDirectory("workbench-one")

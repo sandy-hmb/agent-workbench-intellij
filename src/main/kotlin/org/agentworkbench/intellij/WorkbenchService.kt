@@ -299,6 +299,26 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         ?.getAsJsonObject("protocol")?.getAsJsonArray("operations")
         ?.any { it.isJsonPrimitive && it.asString == operation } == true
 
+    fun completeFeature(slug: String, callback: (Result<Unit>) -> Unit) {
+        val current = snapshot
+        val feature = current.features.firstOrNull { it.get("slug")?.asString == slug }
+            ?: return callback(Result.failure(IllegalStateException("未找到需求：$slug")))
+        val blocker = completionBlocker(feature)
+        if (blocker != null) {
+            callback(Result.failure(IllegalStateException(blocker)))
+            return
+        }
+        val root = current.kitRoot ?: return callback(Result.failure(IllegalStateException("未配置 Kit 根目录")))
+        val python = current.python ?: return callback(Result.failure(IllegalStateException("未配置 Python 解释器")))
+        scope.launch {
+            if (disposed) return@launch
+            val result = KitClient(Path.of(python), Path.of(root)).completeFeature(slug)
+            ApplicationManager.getApplication().invokeLater {
+                if (!disposed) callback(result)
+            }
+        }
+    }
+
     fun runDoctor(callback: (Result<String>) -> Unit) {
         val root = snapshot.kitRoot ?: return callback(Result.failure(IllegalStateException("未配置 Kit 根目录")))
         val python = snapshot.python ?: return callback(Result.failure(IllegalStateException("未配置 Python 解释器")))
@@ -321,6 +341,20 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         const val MAX_RESOURCES = 100
         private const val VFS_DEBOUNCE_MILLIS = 500L
         fun getInstance(project: Project): WorkbenchService = project.getService(WorkbenchService::class.java)
+
+        internal fun completionBlocker(feature: JsonObject): String? {
+            if (feature.get("status")?.asString != "testing") return "仅测试中的需求可以标记完成"
+            val plan = feature.getAsJsonObject("planSummary") ?: return null
+            fun JsonObject.int(name: String) = get(name)?.takeIf { it.isJsonPrimitive }?.runCatching { asInt }?.getOrNull() ?: 0
+            val total = plan.int("total")
+            val completed = plan.int("completed")
+            if (total > completed) return "仍有 ${total - completed} 个计划项未完成"
+            val trusted = plan.getAsJsonObject("trustedProgress")
+            if (trusted?.get("applicable")?.asBoolean == true && trusted.int("total") > trusted.int("completed")) {
+                return "仍有 ${trusted.int("total") - trusted.int("completed")} 个计划项缺少可信凭据"
+            }
+            return null
+        }
 
         /**
          * 把本地检出的 (仓路径, 仓目录名, 当前分支) 与 featureSummary.repositoryBindings 匹配，

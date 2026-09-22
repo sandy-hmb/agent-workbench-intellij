@@ -1,8 +1,8 @@
 # Agent Workbench IntelliJ 插件
 
-Agent Workbench 是 IntelliJ IDEA 和 Rebased 中的工作流只读工作台。它把 `agent-workbench` 记录的工作区、Feature、任务、文档、验证、流程和 Run 集中展示，并把每个已登记业务仓的 Log、Diff、Commit、Branches、冲突处理和 Fetch 入口交给宿主原生 Git。
+Agent Workbench 是 IntelliJ IDEA 和 Rebased 中以只读为主的工作流工作台。它把 `agent-workbench` 记录的工作区、Feature、任务、文档、验证、流程和 Run 集中展示，并把每个已登记业务仓的 Log、Diff、Commit、Branches、冲突处理和 Fetch 入口交给宿主原生 Git。
 
-插件解决的是“查看和定位”问题：不用在工作流仓、多个业务仓和 Git 工具之间反复切换。它不提供 Agent 终端，不调用模型，不创建 Feature，不推进工作流，也不修改 `.workspace` 中的工作流事实。
+插件主要解决“查看和定位”问题：不用在工作流仓、多个业务仓和 Git 工具之间反复切换。它不提供 Agent 终端，不调用模型，不创建 Feature；唯一的状态写操作是用户二次确认后，通过 Kit 既有入口将 `testing` Feature 标记为 `done`。
 
 ## 它和 agent-workbench 的关系
 
@@ -20,7 +20,7 @@ IDEA / Rebased
                └── .workspace 配置登记的业务仓
 ```
 
-插件通过 `inspect --api-major 1 --json` 读取 Kit 的公开只读协议。业务仓列表来自 `.workspace/workspace.json` 的登记内容，Git 分支、工作区变更、上游领先/落后和冲突来自宿主 Git 或只读 Git 信息。插件不会递归扫描父目录，也不会把未登记兄弟仓加入工作台。
+插件通过 `inspect --api-major 1 --json` 读取 Kit 的公开只读协议；标记完成时调用 `kit.py feature set-status <slug> done`。业务仓列表来自 `.workspace/workspace.json` 的登记内容，Git 分支、工作区变更、上游领先/落后和冲突来自宿主 Git 或只读 Git 信息。插件不会递归扫描父目录，也不会把未登记兄弟仓加入工作台。
 
 ## 快速开始
 
@@ -80,10 +80,10 @@ my-project-workspace/
 | --- | --- |
 | 工作区总览 | Kit 路径、业务仓数量、进行中的 Feature、未提交文件和需要关注的现场 |
 | 业务仓库 | 当前分支、工作区是否干净、上游同步、最近提交、搜索和状态筛选 |
-| Feature 工作台 | 全部生命周期状态、名称搜索、关联仓筛选、计划进度和关注项 |
+| Feature 工作台 | 默认查看未完成需求，也可按全部生命周期状态、名称和关联仓筛选 |
 | 接手包 | 预览并复制当前任务、阶段、验证摘要和带版本来源，旧 Kit 自动回退兼容提示词 |
 | 历史检索 | 按关键词、仓库和状态搜索当前工作区的需求、设计、计划与验证记录 |
-| Feature 详情 | 概览、文档、计划、需求分支变更、当前工作目录、验证、流程和扩展 |
+| Feature 详情 | 概览、文档、计划、需求分支变更、当前工作目录、验证、流程，以及将测试中需求标记完成 |
 | 代码评审 | 在 Feature“变更”中按已记录工作分支查找 GitHub PR 或 GitLab MR，并打开评审链接 |
 | 流程记录 | 按 Run 查看已有记录、配置匹配和结果，不会重新执行流程 |
 | 读取诊断 | 显示缺失 Kit、版本不兼容、损坏记录和单仓读取失败原因 |

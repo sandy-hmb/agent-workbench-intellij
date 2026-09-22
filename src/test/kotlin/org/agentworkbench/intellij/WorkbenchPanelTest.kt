@@ -3,9 +3,11 @@ package org.agentworkbench.intellij
 import com.google.gson.JsonParser
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import org.agentworkbench.intellij.git.GitScanService
 import org.agentworkbench.intellij.ui.DocumentReader
 import org.agentworkbench.intellij.ui.FeatureChangesPanel
 import org.agentworkbench.intellij.ui.FeatureReviewPanel
+import org.agentworkbench.intellij.ui.GitPanel
 import org.agentworkbench.intellij.ui.WorkbenchPanel
 import org.agentworkbench.intellij.ui.WorkbenchTabs
 import java.awt.Component
@@ -14,8 +16,10 @@ import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JTable
 import javax.swing.JList
+import javax.swing.JScrollPane
 import javax.swing.JTabbedPane
 import javax.swing.JTextArea
+import javax.swing.SwingUtilities
 
 class WorkbenchPanelTest : BasePlatformTestCase() {
     fun testDocumentReaderShowsHeadingsAndOriginalTextWithoutCreatingFiles() {
@@ -44,7 +48,9 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
             assertTrue(nav.containsAll(listOf("nav-overview","nav-features","nav-search","nav-runs","nav-extensions")))
             val buttons = controls.filterIsInstance<JButton>().map { it.text }
             assertTrue(buttons.containsAll(listOf("Log", "Diff", "Commit", "Branches", "Fetch")))
-            assertTrue(controls.filterIsInstance<JComboBox<*>>().size >= 3)
+            val combos = controls.filterIsInstance<JComboBox<*>>()
+            assertTrue(combos.size >= 3)
+            assertEquals("未完成", combos.single { combo -> (0 until combo.itemCount).map(combo::getItemAt).containsAll(listOf("未完成", "done")) }.selectedItem)
             assertTrue(controls.filterIsInstance<JTable>().all { !it.model.isCellEditable(0, 1) })
             assertTrue(controls.filterIsInstance<JTextArea>().all { !it.isEditable })
             assertEquals("暂无计划", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(0, 0))
@@ -86,6 +92,43 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         assertEquals("3 / 5 (60%)", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5, percentage = true))
         assertEquals("3 / 5 项 (可信 2)", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5, percentage = false, trustedCompleted = 2))
         assertEquals("3 / 5 项 (可信 2) (60%)", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5, percentage = true, trustedCompleted = 2))
+    }
+
+    fun testFeatureCompletionRequiresFinishedTrustedPlan() {
+        val feature = JsonParser.parseString("""{"status":"testing","planSummary":{"completed":2,"total":2,"trustedProgress":{"applicable":true,"completed":1,"total":2}}}""").asJsonObject
+        assertEquals("仍有 1 个计划项缺少可信凭据", WorkbenchService.completionBlocker(feature))
+        feature.getAsJsonObject("planSummary").getAsJsonObject("trustedProgress").addProperty("completed", 2)
+        assertNull(WorkbenchService.completionBlocker(feature))
+    }
+
+    fun testGitPanelShowsAtMostFiveRepositoriesBeforeActions() {
+        val scanService = GitScanService.getInstance(project)
+        val panel = GitPanel(project)
+        try {
+            scanService.refresh((1..6).map { index ->
+                com.google.gson.JsonObject().apply {
+                    addProperty("id", "repo-$index")
+                    addProperty("role", "business")
+                    addProperty("absolutePath", "/missing/repo-$index")
+                    addProperty("availability", "missing")
+                }
+            })
+            val controls = descendants(panel)
+            val table = controls.filterIsInstance<JTable>().single()
+            val scroll = controls.filterIsInstance<JScrollPane>().single { it.viewport.view === table }
+            assertEquals(table.tableHeader.preferredSize.height + table.rowHeight * 5, scroll.preferredSize.height)
+
+            panel.setSize(1200, 800)
+            repeat(3) { layout(panel) }
+            val log = controls.filterIsInstance<JButton>().single { it.text == "Log" }
+            val tableBottom = SwingUtilities.convertPoint(scroll, 0, scroll.height, panel).y
+            val actionTop = SwingUtilities.convertPoint(log, 0, 0, panel).y
+            assertTrue(actionTop >= tableBottom)
+            assertTrue(actionTop + log.height <= panel.height)
+        } finally {
+            Disposer.dispose(panel)
+            scanService.refresh(emptyList())
+        }
     }
 
     fun testDocumentTreePanelCategorizationAndSelection() {

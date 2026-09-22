@@ -61,7 +61,7 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
         }
     }
 
-    /** 除 inspect 外的只读辅助命令（doctor/describe），返回原始 stdout；doctor 有 ERROR 时退出码为 1，仍属正常输出。 */
+    /** 除 inspect 外的受控 Kit 命令，返回原始 stdout；doctor 有 ERROR 时退出码为 1，仍属正常输出。 */
     fun tool(subcommand: String, arguments: List<String> = emptyList()): Result<String> = runCatching {
         require(subcommand in TOOLS) { "不支持的 Kit 命令" }
         val root = kitRoot.toRealPath()
@@ -83,9 +83,10 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             }
             val text = stdout.get(10, TimeUnit.SECONDS)
             val processError = stderr.get(10, TimeUnit.SECONDS)
-            if (process.exitValue() !in 0..1 || text.isBlank()) {
+            val exitCode = process.exitValue()
+            if ((exitCode != 0 && !(subcommand == "doctor" && exitCode == 1)) || text.isBlank()) {
                 LOG.warn("kit $subcommand 退出码 ${process.exitValue()}；stderr=${processError.take(2000)}")
-                val reason = processError.trim().take(300).ifBlank { "退出码 ${process.exitValue()}" }
+                val reason = processError.trim().take(300).ifBlank { "退出码 $exitCode" }
                 error("Kit 命令失败：$reason")
             }
             text
@@ -96,10 +97,13 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
         }
     }
 
+    fun completeFeature(slug: String): Result<Unit> =
+        tool("feature", listOf("set-status", slug, "done")).map { }
+
     private companion object {
         val LOG = Logger.getInstance(KitClient::class.java)
         val OPERATIONS = setOf("workspace", "features", "feature", "document", "verification", "handoff", "search", "workflow", "runs", "run")
-        val TOOLS = setOf("doctor", "describe", "brief")
+        val TOOLS = setOf("doctor", "describe", "brief", "feature")
         const val TIMEOUT_MILLIS = 12_000
         const val VERIFY_TIMEOUT_MILLIS = 32_000
         const val MAX_STDOUT = 8 * 1024 * 1024
