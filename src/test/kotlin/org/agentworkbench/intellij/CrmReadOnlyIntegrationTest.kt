@@ -63,23 +63,16 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
                         panel.navigate("overview");settle(panel);capture(panel,"crm-overview-$theme")
                         panel.navigate("features");settle(panel);capture(panel,"crm-features-$theme")
                         panel.selectFeature(slug)
-                        PlatformTestUtil.waitWithEventsDispatching("真实需求卡片已显示", {
-                            descendants(panel).filterIsInstance<javax.swing.JLabel>().any { it.text=="需求范围" }
-                        },10)
+                        PlatformTestUtil.waitWithEventsDispatching("计划已显示", { service.snapshot().detail != null },10)
                         settle(panel);capture(panel,"crm-feature-$theme")
-                        val tabs=descendants(panel).filterIsInstance<org.agentworkbench.intellij.ui.WorkbenchTabs>().first { it.tabCount==6 }
-                        tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.DOCUMENTS
-                        PlatformTestUtil.waitWithEventsDispatching("文档正文", { service.snapshot().document!=null },10)
-                        settle(panel);capture(panel,"crm-document-$theme")
-                        tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.VERIFY
-                        PlatformTestUtil.waitWithEventsDispatching("v2 验证已显示", {
-                            descendants(panel).filterIsInstance<javax.swing.JLabel>().any { it.text?.contains("检查 1") == true }
-                        },10)
-                        settle(panel);capture(panel,"crm-verification-$theme")
+                        val tabs=descendants(panel).filterIsInstance<org.agentworkbench.intellij.ui.WorkbenchTabs>().first { it.titleAt(0)=="计划" }
+                        tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.CHANGES
+                        PlatformTestUtil.waitWithEventsDispatching("变更投影", { service.snapshot().change != null },10)
+                        settle(panel);capture(panel,"crm-changes-$theme")
                         tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.WORKFLOW
-                        PlatformTestUtil.waitWithEventsDispatching("流程数据", { service.snapshot().workflow!=null },10)
+                        PlatformTestUtil.waitWithEventsDispatching("流程投影", { service.snapshot().flow != null },10)
                         settle(panel);capture(panel,"crm-workflow-$theme")
-                        tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.SUMMARY
+                        tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.PLAN
                         panel.setSize(1000,800);settle(panel);capture(panel,"crm-feature-narrow-$theme")
                     } finally { Disposer.dispose(panel) }
                 }

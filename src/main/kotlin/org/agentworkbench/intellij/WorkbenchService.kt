@@ -146,9 +146,29 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         ApplicationManager.getApplication().invokeLater { if (!disposed) callback(state) }
     }
 
-    fun loadFeature(slug: String, callback: (Snapshot) -> Unit) {
+    fun loadFeature(slug: String, callback: (Snapshot) -> Unit) = loadProjection(slug, "task", callback)
+
+    fun loadProjection(slug: String, view: String, callback: (Snapshot) -> Unit) {
+        require(view in setOf("task", "change", "flow")) { "不支持的详情视图" }
         synchronized(lock) { snapshot = snapshot.copy(selectedDetail = slug, selectedHandoff = null) }
-        requestFor("feature", slug, callback) { state, response -> if (state.selectedDetail == slug) state.copy(detail = response, error = null) else state }
+        val current = snapshot
+        if (!supports("projection") && current.workspace != null) {
+            deliver(callback, current.copy(error = "当前 Kit 版本不兼容：缺少 inspect projection，请升级 Kit。"))
+            return
+        }
+        requestFor("projection", "$slug:$view", callback, listOf(slug, "--view", view), relevant = { it.selectedDetail == slug }) { state, response ->
+            if (response.status == "partial") {
+                state.copy(error = "${view} 详情不完整：${response.diagnostics.joinToString("; ") { it.message }.ifBlank { "Kit 返回 partial" }}；保留上次内容")
+            } else if (response.data?.asJsonObject?.get("view")?.asString != view) {
+                state.copy(error = "Kit 返回了不匹配的详情视图；保留上次内容")
+            } else if (state.selectedDetail == slug) {
+                when (view) {
+                    "task" -> state.copy(detail = response, error = null)
+                    "change" -> state.copy(change = response, error = null)
+                    else -> state.copy(flow = response, error = null)
+                }
+            } else state
+        }
     }
     fun loadDocument(slug: String, path: String, revision: String?, callback: (Snapshot) -> Unit) = requestFor("document", "$slug:$path", callback, listOf(slug, "--path", path) + (revision?.let { listOf("--revision", it) } ?: emptyList())) { state, response -> state.copy(document = response, error = null) }
     fun loadVerification(slug: String, callback: (Snapshot) -> Unit) = loadVerification(slug, false, callback)
@@ -333,7 +353,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
 
     override fun dispose() { disposed = true; vfsDebounce.getAndSet(null)?.cancel(); coroutineJobs.values.forEach { it.cancel() }; coroutineJobs.clear() }
 
-    data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val features: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null, val handoff: HandoffData? = null, val search: SearchData? = null, val selectedHandoff: String? = null, val selectedSearch: String? = null, val selectedRun: String? = null, val selectedRunsFilter: String? = null) {
+    data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val features: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null, val handoff: HandoffData? = null, val search: SearchData? = null, val selectedHandoff: String? = null, val selectedSearch: String? = null, val selectedRun: String? = null, val selectedRunsFilter: String? = null, val change: InspectResponse? = null, val flow: InspectResponse? = null) {
         companion object { fun empty(root: String? = null, python: String? = null) = Snapshot(root, python, null, emptyList(), null, null) }
     }
     companion object {

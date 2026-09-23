@@ -53,6 +53,24 @@ class GitComparisonTest {
         assertTrue(result is NativeGit.Comparison.Unavailable)
     }
 
+    @Test fun doesNotGuessOriginWhenLocalBranchDiffers() {
+        val root = Files.createTempDirectory("workbench-explicit-branch-").toFile()
+        try {
+            git(root, "init", "-b", "main")
+            root.resolve("base.txt").writeText("base")
+            git(root, "add", ".")
+            git(root, "commit", "-m", "base")
+            git(root, "remote", "add", "origin", root.path)
+            git(root, "fetch", "origin", "main")
+            git(root, "switch", "-c", "feature")
+            root.resolve("local.txt").writeText("local")
+            git(root, "add", ".")
+            git(root, "commit", "-m", "local")
+            assertEquals(listOf("local.txt"), (NativeGit().comparison(root, "main", "feature") as NativeGit.Comparison.Available).files)
+            assertTrue(NativeGit().comparison(root, "main", "missing") is NativeGit.Comparison.Unavailable)
+        } finally { root.deleteRecursively() }
+    }
+
     @Test
     fun resolvesReviewRemoteFromRecordedBranchWithoutCheckingOutThatBranch() {
         val root = Files.createTempDirectory("workbench-review-remote-").toFile()
@@ -87,6 +105,25 @@ class GitComparisonTest {
         val result = NativeGit().comparison(root, "main", "feature/orphan")
 
         assertTrue(result is NativeGit.Comparison.Unavailable)
+    }
+
+    @Test fun takeoverUsesExplicitCommitAndRejectsInvalidStart() {
+        val root = Files.createTempDirectory("workbench-takeover-").toFile()
+        try {
+            git(root, "init", "-b", "main")
+            root.resolve("base.txt").writeText("base")
+            git(root, "add", ".")
+            git(root, "commit", "-m", "base")
+            val start = git(root, "rev-parse", "HEAD").trim()
+            git(root, "switch", "-c", "feature")
+            root.resolve("after.txt").writeText("after")
+            git(root, "add", ".")
+            git(root, "commit", "-m", "after")
+            val result = NativeGit().comparison(root, "main", "feature", start) as NativeGit.Comparison.Available
+            assertEquals(start, result.base)
+            assertEquals(listOf("after.txt"), result.files)
+            assertTrue(NativeGit().comparison(root, "main", "feature", "not-a-commit") is NativeGit.Comparison.Unavailable)
+        } finally { root.deleteRecursively() }
     }
 
     private fun git(root: File, vararg arguments: String): String {

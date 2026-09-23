@@ -71,12 +71,24 @@ class WorkbenchVisualTest:BasePlatformTestCase() {
             val input=javaClass.getResourceAsStream("/inspect-v1/$op.json")!!.use { it.readBytes().toString(Charsets.UTF_8) }
             Files.writeString(kit.resolve("$op.json"),input.replace("/synthetic",directory.toString()))
         }
+        val workspace=com.google.gson.JsonParser.parseString(Files.readString(kit.resolve("workspace.json"))).asJsonObject
+        workspace.getAsJsonObject("data").getAsJsonObject("protocol").getAsJsonArray("operations").add("projection")
+        Files.writeString(kit.resolve("workspace.json"),workspace.toString())
         Files.writeString(kit.resolve("scripts/kit.py"),"""
             import json,pathlib,sys
             root=pathlib.Path(sys.argv[sys.argv.index('--root')+1])
             op=sys.argv[sys.argv.index('--json')+1]
-            data=json.loads((root/(op+'.json')).read_text())
+            view=sys.argv[sys.argv.index('--view')+1] if '--view' in sys.argv else None
+            data=json.loads((root/(('feature' if op=='projection' else op)+'.json')).read_text())
             data['root']=str(root)
+            if op=='projection':
+                source=data['data']; data['operation']='projection'
+                if view=='task': data['data']={k:source[k] for k in ('summary','tasks','progression','featureRevision')}
+                elif view=='change': data['data']={'featureRevision':source['featureRevision'],'repositories':source['summary']['repositoryBindings'],'comparison':{}}
+                else:
+                    workflow=json.loads((root/'workflow.json').read_text())['data']
+                    data['data']={'featureRevision':source['featureRevision'],'status':source['summary']['status'],'workflow':workflow,'delivery':{}}
+                data['data']['view']=view
             print(json.dumps(data))
         """.trimIndent())
         val dark=!com.intellij.ui.JBColor.isBright()
@@ -88,16 +100,16 @@ class WorkbenchVisualTest:BasePlatformTestCase() {
             val panel=WorkbenchPanel(project)
             try {
                 panel.setSize(1440,1000);panel.setActive(true);panel.navigate("overview");paint(panel,"sample-overview");panel.selectFeature("demo")
-                waitText(panel,"需求范围")
-                val tabs=descendants(panel).filterIsInstance<WorkbenchTabs>().first { it.tabCount==6 }
-                assertEquals(listOf("概览", "文档", "计划 1/2", "变更", "验证", "流程"), (0 until 6).map(tabs::titleAt))
+                waitText(panel,"实施计划 · 1/2",contains=true)
+                val tabs=descendants(panel).filterIsInstance<WorkbenchTabs>().first { it.titleAt(0)=="计划" }
+                assertEquals(listOf("计划", "变更", "流程"), (0 until 3).map(tabs::titleAt))
                 val labels = descendants(panel).filterIsInstance<JLabel>().map { it.text }
                 assertTrue(labels.containsAll(listOf("开发中", "开发实现")))
                 val nav=descendants(panel).filterIsInstance<JButton>().mapNotNull { it.name }
                 assertTrue(nav.toString(),nav.containsAll(listOf("nav-overview","nav-features","nav-runs","nav-extensions","nav-repo/service")))
                 paint(panel,"sample-feature")
                 tabs.selectedIndex=WorkbenchPanel.CHANGES
-                val changes=descendants(panel).filterIsInstance<WorkbenchTabs>().first { it.tabCount==3 }
+                val changes=descendants(panel).filterIsInstance<WorkbenchTabs>().first { it.titleAt(0)=="代码评审" }
                 assertEquals(listOf("代码评审","需求分支已提交","当前工作目录"),(0 until 3).map(changes::titleAt))
                 paint(panel,"sample-changes-review")
                 changes.selectedIndex=1
@@ -112,18 +124,11 @@ class WorkbenchVisualTest:BasePlatformTestCase() {
                 assertTrue(actionY>=0&&actionY+logAction.height<=featureScroll.viewport.height)
                 paint(panel,"sample-changes-working-small")
                 panel.setSize(1440,1000)
-                tabs.selectedIndex=WorkbenchPanel.VERIFY
-                waitText(panel,"检查 1",contains=true)
-                paint(panel,"sample-verification")
                 tabs.selectedIndex=WorkbenchPanel.WORKFLOW
                 waitText(panel,"quality.integration",contains=true)
-                PlatformTestUtil.waitWithEventsDispatching("Run 结果已显示",{descendants(panel).filterIsInstance<JLabel>().any { it.text=="配置一致" }},10)
                 paint(panel,"sample-workflow")
-                tabs.selectedIndex=WorkbenchPanel.SUMMARY
-                val locate=descendants(panel).filterIsInstance<JButton>().first { it.text=="定位原文" }
-                locate.doClick()
-                assertEquals(WorkbenchPanel.DOCUMENTS,tabs.selectedIndex)
-                PlatformTestUtil.waitWithEventsDispatching("定位任务原文",{service.snapshot().document?.data?.asJsonObject?.get("path")?.asString=="plans/implementation.md"},10)
+                tabs.selectedIndex=WorkbenchPanel.PLAN
+                assertEquals(WorkbenchPanel.PLAN,tabs.selectedIndex)
                 panel.navigate("features")
                 assertTrue(descendants(panel).filterIsInstance<JButton>().any { it.text=="合成需求" })
 

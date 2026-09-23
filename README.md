@@ -31,13 +31,13 @@ IDEA / Rebased
 ### 前置条件
 
 - IntelliJ IDEA 2025.2（Build 252）或 Rebased 1.1.12（Build 262）及兼容版本。
-- Kit 版本 `1.6.3` 或更高版本。插件只支持 `task-evidence-v2` 验证视图。
+- Kit 版本 `1.7.0`，与插件 `0.5.0` 配套使用；可读取旧 Feature，但不承诺新旧程序版本混用。
 - 可执行的 Python 3，通常是 `python3`。
 - 当前项目为受信任项目，并已安装宿主自带的 Git 支持。
 
 ### 安装开发包
 
-可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.4.2.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
+可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.5.0.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
 
 如需从源码构建，在本仓执行：
 
@@ -48,7 +48,7 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
   test buildPlugin
 ```
 
-安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.4.2`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
+安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.5.0`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
 
 ### 首次打开工作区
 
@@ -83,7 +83,7 @@ my-project-workspace/
 | Feature 工作台 | 默认查看未完成需求，也可按全部生命周期状态、名称和关联仓筛选 |
 | 接手包 | 预览并复制当前任务、阶段、验证摘要和带版本来源，旧 Kit 自动回退兼容提示词 |
 | 历史检索 | 按关键词、仓库和状态搜索当前工作区的需求、设计、计划与验证记录 |
-| Feature 详情 | 概览、文档、计划、需求分支变更、当前工作目录、验证、流程，以及将测试中需求标记完成 |
+| Feature 详情 | 计划、变更、流程三页；按需求恢复页面和任务位置；原始文档在 IDEA 编辑器打开；测试中需求可经二次确认标记完成 |
 | 代码评审 | 在 Feature“变更”中按已记录工作分支查找 GitHub PR 或 GitLab MR，并打开评审链接 |
 | 流程记录 | 按 Run 查看已有记录、配置匹配和结果，不会重新执行流程 |
 | 读取诊断 | 显示缺失 Kit、版本不兼容、损坏记录和单仓读取失败原因 |
@@ -92,7 +92,7 @@ my-project-workspace/
 
 ### 查询代码评审
 
-在 `Settings | Tools | Agent Workbench` 的“代码托管服务”配置 GitHub 或 GitLab 服务和读取 Token。Token 仅保存到 IDE 的密码库，工作区设置文件只保存服务地址和 SSH 主机别名。打开 Feature 的“变更”后，默认“代码评审”子页会依据该 Feature 已记录的仓库和工作分支查询同仓 PR/MR；手工创建、已关闭和已合并的评审同样可见。“需求分支已提交”和“当前工作目录”作为次级子页保留。
+在 `Settings | Tools | Agent Workbench` 的“代码托管服务”配置 GitHub 或 GitLab 服务和读取 Token。Token 仅保存到 IDE 的密码库，工作区设置文件只保存服务地址和 SSH 主机别名。首次打开 Feature 默认计划页；变更页默认“需求分支已提交”，代码评审与当前工作目录可按需切换。已提交页展示多仓比较范围、文件数、读取异常和工作目录变化；接手起点仅使用记录中的 commit 或用户输入的 commit，不自动取首次打开的 HEAD。比较失败不会切换到工作目录 Diff。代码评审仅在打开时查询同仓 PR/MR。流程页分别展示 commit／PR、验证、部署和外部验收；未知保持未知。
 
 GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab Token 需要 `read_api`。未配置服务、Token 无效、仓库权限不足和查询失败会在对应仓库行显示，不会被误报为“未找到 PR/MR”。首页和仓库列表不会查询评审。
 
@@ -117,7 +117,7 @@ GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab T
 
 ### 提示“Inspect 信封格式无效”
 
-这是旧 Kit 不支持当前 v2 验证投影时的提示。升级绑定的工作流仓到 `1.6.3` 或更高版本，然后重新点击“绑定并刷新”：
+旧 Kit 缺少当前插件必需的定向投影时会提示版本不兼容。将绑定的工作流仓升级到与插件 `0.5.0` 配套的 Kit `1.7.0`，再点击“绑定并刷新”：
 
 ```bash
 cd /path/to/agent-workbench
@@ -133,7 +133,7 @@ python3 scripts/kit.py inspect --root . --api-major 1 --json workspace
 
 ### 工作台没有数据
 
-确认项目已受信任、Kit 根目录包含 `scripts/kit.py` 和 `.workspace/`，Python 路径可执行，并且 Kit 至少为 `1.3.0`。未初始化的 Kit 只显示维护模式信息，插件不会自动初始化工作区。
+确认项目已受信任、Kit 根目录包含 `scripts/kit.py` 和 `.workspace/`，Python 路径可执行，并且 Kit 为配套的 `1.7.0`。未初始化的 Kit 只显示维护模式信息，插件不会自动初始化工作区。
 
 ### 为什么没有所有父目录项目
 

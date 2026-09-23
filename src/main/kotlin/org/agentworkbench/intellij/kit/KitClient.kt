@@ -34,6 +34,11 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             val text = stdout.get(1, TimeUnit.SECONDS)
             val processError = stderr.get(1, TimeUnit.SECONDS)
             val exitCode = process.exitValue()
+            if (operation == "projection" && exitCode != 0 && (text + processError).let {
+                    it.contains("invalid choice: 'projection'") || it.contains("未知子命令：projection") || it.contains("unrecognized arguments: --view")
+                }) {
+                throw InspectReadException(listOf(InspectDiagnostic("KIT_PROJECTION_UNAVAILABLE", "当前 Kit 版本不兼容：缺少 inspect projection，请升级 Kit。")))
+            }
             if (exitCode == 2 && (text.lineSequence() + processError.lineSequence()).any {
                     it.trim() == "未知子命令：inspect" || it.trim().startsWith("kit.py: error: argument") && it.contains("invalid choice: 'inspect'")
                 }) {
@@ -102,7 +107,7 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
 
     private companion object {
         val LOG = Logger.getInstance(KitClient::class.java)
-        val OPERATIONS = setOf("workspace", "features", "feature", "document", "verification", "handoff", "search", "workflow", "runs", "run")
+        val OPERATIONS = setOf("workspace", "features", "feature", "projection", "document", "verification", "handoff", "search", "workflow", "runs", "run")
         val TOOLS = setOf("doctor", "describe", "brief", "feature")
         const val TIMEOUT_MILLIS = 12_000
         const val VERIFY_TIMEOUT_MILLIS = 32_000

@@ -51,29 +51,33 @@ internal class NativeGit(private val executable: String = "git") {
             ?: error("remote 未配置可用地址")
         ReviewRemote.Resolved(chosen, url)
     }.getOrElse { ReviewRemote.Unavailable(it.message ?: "无法解析评审 remote") }
-    fun comparison(root: File, baseBranch: String, workBranch: String): Comparison {
-        runCatching { requireRepositoryRoot(root) }.onFailure { return Comparison.Unavailable(it.message ?: "不是独立 Git 根") }
-        // 基线分支优先匹配远程 origin/<base>，保证比对基准为团队最新；不存在时使用本地分支
-        val base = resolveBaseBranch(root, baseBranch) ?: return Comparison.Unavailable("未找到基线分支 $baseBranch")
-        // 需求分支优先匹配本地开发分支（保留本地未推送的新代码），不存在时匹配远程分支
-        val work = resolveWorkBranch(root, workBranch) ?: return Comparison.Unavailable("未找到需求分支 $workBranch")
-        val mergeBases = runCatching { read(root, "merge-base", "--all", base, work) }
-            .getOrElse { return Comparison.Unavailable("比较没有共同祖先") }
-            .lines().filter(String::isNotBlank)
-        if (mergeBases.size != 1) return Comparison.Unavailable("比较需要唯一共同祖先")
+    fun comparison(root: File, baseBranch: String, workBranch: String, startCommit: String? = null): Comparison = runCatching {
+        requireRepositoryRoot(root)
+        val work = resolveWorkBranch(root, workBranch) ?: error("未找到需求分支 $workBranch")
+        val base = if (startCommit.isNullOrBlank()) resolveBaseBranch(root, baseBranch)
+            ?: error("未找到基线分支 $baseBranch")
+        else {
+            require(startCommit.matches(Regex("[0-9a-fA-F]{7,40}"))) { "接手起点不是有效 commit" }
+            read(root, "rev-parse", "--verify", "--quiet", "--end-of-options", "${startCommit}^{commit}").trim()
+                .takeIf(String::isNotEmpty) ?: error("接手起点 commit 不存在")
+        }
+        val mergeBases = read(root, "merge-base", "--all", base, work).lines().filter(String::isNotBlank)
+        require(mergeBases.size == 1) { "比较需要唯一共同祖先" }
         val mergeBase = mergeBases.single()
-        val commits = read(root, "rev-list", "--reverse", "$base..$work").lines().filter(String::isNotBlank)
-        val files = read(root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "$mergeBase..$work", "--").lines().filter(String::isNotBlank)
-        return Comparison.Available(base, work, mergeBase, commits, files)
-    }
+        if (!startCommit.isNullOrBlank()) require(mergeBase == base) { "接手起点不是需求分支的祖先" }
+        val start = if (startCommit.isNullOrBlank()) mergeBase else base
+        val commits = read(root, "rev-list", "--reverse", "$start..$work").lines().filter(String::isNotBlank)
+        val files = read(root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "$start..$work", "--").lines().filter(String::isNotBlank)
+        Comparison.Available(start, work, mergeBase, commits, files)
+    }.getOrElse { Comparison.Unavailable(it.message ?: "比较不可用") }
 
     internal fun resolveBaseBranch(root: File, branch: String): String? {
         if (branch.isBlank() || branch.startsWith('-') || branch.contains('\u0000')) return null
-        val candidates = listOf(
-            if (branch.startsWith("refs/")) branch else "refs/remotes/origin/$branch",
-            if (branch.startsWith("refs/")) branch else "refs/heads/$branch",
-            branch
-        )
+        val candidates = listOf(when {
+            branch.startsWith("refs/") -> branch
+            branch.startsWith("origin/") -> "refs/remotes/$branch"
+            else -> "refs/heads/$branch"
+        })
         for (candidate in candidates) {
             val commit = runCatching { read(root, "rev-parse", "--verify", "--quiet", "--end-of-options", "${candidate}^{commit}") }
                 .getOrNull()?.trim()?.takeIf(String::isNotEmpty)
@@ -84,11 +88,11 @@ internal class NativeGit(private val executable: String = "git") {
 
     internal fun resolveWorkBranch(root: File, branch: String): String? {
         if (branch.isBlank() || branch.startsWith('-') || branch.contains('\u0000')) return null
-        val candidates = listOf(
-            if (branch.startsWith("refs/")) branch else "refs/heads/$branch",
-            if (branch.startsWith("refs/")) branch else "refs/remotes/origin/$branch",
-            branch
-        )
+        val candidates = listOf(when {
+            branch.startsWith("refs/") -> branch
+            branch.startsWith("origin/") -> "refs/remotes/$branch"
+            else -> "refs/heads/$branch"
+        })
         for (candidate in candidates) {
             val commit = runCatching { read(root, "rev-parse", "--verify", "--quiet", "--end-of-options", "${candidate}^{commit}") }
                 .getOrNull()?.trim()?.takeIf(String::isNotEmpty)

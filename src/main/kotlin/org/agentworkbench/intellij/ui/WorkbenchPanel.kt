@@ -32,6 +32,7 @@ import org.agentworkbench.intellij.kit.HandoffData
 import org.agentworkbench.intellij.kit.SearchHit
 import java.awt.*
 import java.net.URI
+import java.nio.file.Files
 import java.nio.file.Path
 import javax.swing.*
 import javax.swing.table.DefaultTableModel
@@ -104,8 +105,9 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     ).apply { border = JBUI.Borders.empty(2, 0, 4, 0) }
     private val tabs = WorkbenchTabs()
     private val planTitle = U.label("计划", 14, bold = true)
-    private val taskTable = table("编号", "完成", "任务", "依赖", "原文位置")
-    private val taskFilter = JComboBox(arrayOf("全部任务", "待完成", "已完成", "可信已完成", "缺凭据/待核验"))
+    private val taskTable = table("编号", "状态", "任务", "依赖", "原文位置")
+    private val planScrollPane = U.scroll(taskTable)
+    private val taskFilter = JComboBox(arrayOf("全部任务", "可继续", "待验证", "等待条件", "已完成"))
     private val reader = DocumentReader(project, ::openLink)
     private val docPanel = DocumentTreePanel(
         project = project,
@@ -156,6 +158,8 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private var runData: JsonObject? = null
     private var scenes = emptyMap<String, NativeGit.Snapshot>()
     private var changing = false
+    private var pendingPlanOffset: Pair<String, Int>? = null
+    private var planOffset = 0
     private var disposed = false
     private var active = false
     private var route = "overview"
@@ -311,24 +315,22 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         U.append(featuresPage, featureList, 16)
         pages.add(U.page(U.padded(featuresPage) as JPanel), "features")
 
-        tabs.addTab("概览", featureDashboard)
-        val locateTaskBtn = U.button("定位所选任务原文", action = ::locateTask).apply { toolTipText = "在内置阅读器中查看任务定义" }
+        val locateTaskBtn = U.button("定位所选任务原文", action = ::locateTask).apply { toolTipText = "在编辑器中查看任务定义" }
         val openTaskInEditorBtn = U.button("在编辑器中打开任务", true) {
             val task = taskSelected() ?: return@button
             locateTaskInEditor(task)
         }.apply { icon = AllIcons.General.OpenInToolWindow; toolTipText = "在主编辑器中打开 implementation.md 并跳转到该任务定义行" }
         val planPanel = U.panel().apply {
             add(U.row(planTitle, U.flow(taskFilter, locateTaskBtn, openTaskInEditorBtn)).apply { border = JBUI.Borders.empty(24,0,16,0) }, BorderLayout.NORTH)
-            add(U.scroll(taskTable))
+            add(planScrollPane)
         }
         featureChangesTabs.addTab("代码评审", U.page(U.padded(featureReviewPanel) as JPanel))
         featureChangesTabs.addTab("需求分支已提交", committedChanges)
+        committedChanges.onLocationChanged = { repo, file -> selectedSlug?.let { slug -> state.kitRoot?.let { root -> settings.featureView(root, slug).apply { repository = repo; this.file = file } } } }
         featureChangesTabs.addTab("当前工作目录", workingGit)
 
-        tabs.addTab("文档", docPanel)
         tabs.addTab("计划", planPanel)
         tabs.addTab("变更", featureChangesTabs)
-        tabs.addTab("验证", U.page(verificationBody))
         tabs.addTab("流程", U.panel().apply { add(U.row(U.flow(U.label("运行记录",11,U.muted), runPicker), runStatus).apply { border = JBUI.Borders.empty(22,0,20,0) }, BorderLayout.NORTH); add(U.page(workflowBody)) })
 
         val featureNorth = U.column(4, featureHeader, featureDoctorStrip)
@@ -369,17 +371,29 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         pages.add(U.page(U.padded(diagnosticsPage) as JPanel), "diagnostics")
         tabs.onChange = { if (!changing) {
             if (tabs.selectedIndex != CHANGES) { lastReviewKey=null; reviewService.invalidate() }
+            if (tabs.selectedIndex == PLAN) SwingUtilities.invokeLater { applyPlanOffset() }
             remember(); loadVisible()
         } }
         featureChangesTabs.onChange = { if (!changing) {
             if (featureChangesTabs.selectedIndex != REVIEW_CHANGES) { lastReviewKey=null; reviewService.invalidate() }
-            loadVisible()
+            remember(); loadVisible()
         } }
         search.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
             override fun textChanged(e: javax.swing.event.DocumentEvent) { filterFeatures(); remember() }
         })
         lifecycle.addActionListener { filterFeatures(); remember() }; repoFilter.addActionListener { filterFeatures() }; sort.addActionListener { filterFeatures() }
-        taskFilter.addActionListener { renderTasks() }
+        taskFilter.addActionListener { renderTasks(); remember() }
+        planScrollPane.verticalScrollBar.addAdjustmentListener {
+            if (pendingPlanOffset != null) applyPlanOffset()
+            else if (!changing && tabs.selectedIndex == PLAN && route == "feature") {
+                planOffset = planScrollPane.verticalScrollBar.value
+                remember()
+            }
+        }
+        planScrollPane.viewport.addComponentListener(object : java.awt.event.ComponentAdapter() {
+            override fun componentResized(e: java.awt.event.ComponentEvent) { applyPlanOffset() }
+        })
+        taskTable.selectionModel.addListSelectionListener { if (!it.valueIsAdjusting) remember() }
         taskTable.addMouseListener(object : java.awt.event.MouseAdapter() { override fun mouseClicked(e: java.awt.event.MouseEvent) { if(e.clickCount == 2) locateTask() } })
         taskTable.registerKeyboardAction({ locateTask() }, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER, 0), JComponent.WHEN_FOCUSED)
         taskTable.registerKeyboardAction({
@@ -431,7 +445,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             if (disposed) return@subscribe
             scenes = scans.mapNotNull { s -> s.scene?.let { s.id to it } }.toMap()
             renderWorkspaceSummary(); renderSidebar()
-            if (!scanning) detailData?.let(::renderFeatureOverview)
+            // 详情不再自动读取隐藏的文档概览。
         }
         service.subscribe(this) {
             val next = service.snapshot()
@@ -480,7 +494,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         if(disposed) return
         val next = service.snapshot(); val changedRoot = state.kitRoot != next.kitRoot; state = next
         (layout as? CardLayout)?.show(this, if (state.kitRoot.isNullOrBlank()) "EMPTY" else "CONTENT")
-        if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; businessReposExpanded=false; describeLoaded=false; describeSummaries=emptyMap(); lastLocalReqKey=null;lastReviewKey=null;reviewService.invalidate(); pendingKit.clear(); historyModel.clear(); historyCount.text="输入关键词后搜索当前工作区的历史文档"; restore() }
+        if(changedRoot) { selectedSlug=null; detailData=null; verificationData=null; workflowData=null; deliveryData=null; runData=null; changing=true;runPicker.removeAllItems();changing=false;runStatus.text="无当前 Run";renderWorkflow(); lastWorkspaceRevision=null; scenes=emptyMap(); doctorRan=false; businessReposExpanded=false; describeLoaded=false; describeSummaries=emptyMap(); lastLocalReqKey=null;lastReviewKey=null;reviewService.invalidate(); pendingKit.clear(); historyModel.clear(); historyCount.text="输入关键词后搜索当前工作区的历史文档"; restore() }
         overviewPath.text=state.kitRoot ?: "在侧栏入口绑定工作流 Kit"
         workspaceName.text = state.workspace?.data.obj()?.get("identity").obj()?.str("name") ?: "研发工作区"
         workspacePath.text = state.kitRoot?.let { Path.of(it).fileName.toString() } ?: "尚未绑定 Kit"
@@ -546,10 +560,11 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         val featIssues = featureAttention()
         val allAttention = attention()
 
+        val unreadable = repositories().any { scenes[it.str("id")] !is NativeGit.Snapshot.Available }
         val summaryFingerprint = buildString {
             append(repositories().size).append(';')
             append(pending).append(';')
-            append(values.sumOf { it.changes }).append(';')
+            append(values.sumOf { it.changes }).append(';').append(unreadable).append(';')
             append(allAttention.joinToString(",")).append(';')
             state.features.filter { it.str("status") != "done" }.take(5).forEach { append(it).append(';') }
         }
@@ -575,7 +590,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         overviewMetrics.removeAll(); overviewMetrics.add(U.metrics(
             clickableMetric("Git 仓库", repositories().size.toString(), "${repositories().count { it.str("role")=="business" }} 个业务仓 ↗") { navigate("repositories") },
             clickableMetric("进行中的 Feature", pending.toString(), "查看需求列表 ↗") { navigate("features") },
-            clickableMetric("未提交文件", if (scenes.isEmpty()) "—" else values.sumOf { it.changes }.toString(), "筛选有变更仓库 ↗") { git.filter("changed") },
+            clickableMetric("未提交文件", if (unreadable) "—" else values.sumOf { it.changes }.toString(), if (unreadable) "部分仓库读取失败，合计未知 ↗" else "筛选有变更仓库 ↗") { git.filter("changed") },
             clickableMetric("需要关注", allAttention.size.toString(), attentionSub, if (allAttention.isEmpty()) U.text else U.amber, tooltip = attentionTip) {
                 if (featIssues.isNotEmpty()) {
                     changing = true
@@ -716,15 +731,26 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         return U.row(left,progress).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(17,0)); name="feature-${item.str("slug")}" }
     }
     fun selectFeature(slug:String) {
-        selectedSlug=slug;selectedDocument=null;checkedFeatureRevision=null;verificationData=null;detailData=null;tasks=emptyList();files=emptyList();lastLocalReqKey=null;lastReviewKey=null;reviewService.invalidate();renderTasks()
-        featureHeader.removeAll();featureOverview.removeAll();U.append(featureOverview,U.empty("正在读取需求…",slug));navigate("feature")
-        changing=true;tabs.selectedIndex=SUMMARY;featureChangesTabs.selectedIndex=REVIEW_CHANGES;changing=false;remember()
+        if (selectedSlug != slug) remember()
+        pendingPlanOffset = null
+        planOffset = 0
+        selectedSlug=slug;selectedDocument=null;checkedFeatureRevision=null;checkingCode=false;verificationData=null;workflowData=null;deliveryData=null;runData=null;detailData=null;tasks=emptyList();files=emptyList();lastLocalReqKey=null;lastReviewKey=null;reviewService.invalidate()
+        changing=true;runPicker.removeAllItems();changing=false
+        runStatus.text="无当前 Run"
+        verificationBody.removeAll();renderWorkflow()
+        featureHeader.removeAll()
+        val view = state.kitRoot?.let { settings.featureView(it, slug) }
+        changing=true
+        tabs.selectedIndex=view?.tab?.coerceIn(0, tabs.tabCount-1) ?: PLAN
+        featureChangesTabs.selectedIndex=view?.changeTab?.coerceIn(0, featureChangesTabs.tabCount-1) ?: COMMITTED_CHANGES
+        taskFilter.selectedItem = view?.filter?.takeIf { value -> (0 until taskFilter.itemCount).any { taskFilter.getItemAt(it) == value } } ?: "全部任务"
+        committedChanges.restoreLocation(view?.repository.orEmpty(), view?.file.orEmpty(), view?.startCommit.orEmpty())
+        changing=false;renderTasks();navigate("feature")
         service.loadFeature(slug) { result ->
             if(disposed||selectedSlug!=slug) return@loadFeature
             val data=result.detail?.data.obj()
             if(result.error!=null||data?.get("summary").obj()?.str("slug")!=slug) { notice.text=result.error?:"详情不可用";notice.isVisible=true;return@loadFeature }
-            state=result;showFeature(data!!)
-            service.loadVerification(slug) { evidence -> if(!disposed&&selectedSlug==slug&&evidence.error==null) { verificationData=evidence.verification?.data.obj();renderFeatureOverview(data);renderVerification() } }
+            state=result;notice.isVisible=false;showFeature(data!!)
         }
     }
     private fun showFeature(data: JsonObject) {
@@ -739,7 +765,6 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         val progression = data.get("progression").obj()
         val currentStage = progression?.str("currentStage") ?: "feature.implement"
         tasks = data.objects("tasks")
-        files = documentFiles(data)
         val completedCount = tasks.count { it.get("completed")?.asBoolean == true }
         val totalCount = tasks.size
 
@@ -785,10 +810,25 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                 icon = AllIcons.Actions.Preview
                 toolTipText = "预览带来源和 token 估算的接手包；旧 Kit 自动复制兼容版 brief"
             }
+            val documents = listOf(
+                "requirements/requirements.md", "requirements.md", "design/design.md", "design.md",
+                "plans/implementation.md", "plan.md", "changes/change.md", "change/change.md", "change.md", "README.md"
+            )
+            val featureDir = WorkbenchNavigation.resolveFeatureDir(project, slug)
+            val documentMenu = JPopupMenu().apply {
+                documents.filter { path -> featureDir?.resolve(path)?.let(Files::isRegularFile) == true }.forEach { path ->
+                    add(JMenuItem(path).apply {
+                        actionCommand = path
+                        addActionListener { WorkbenchNavigation.openFeatureInEditor(project, slug, path) }
+                    })
+                }
+            }
             val openDocBtn = U.button("查看文档 (F4)", true) {
-                WorkbenchNavigation.openFeatureInEditor(project, slug)
+                documentMenu.show(this, 0, height)
             }.apply {
                 icon = AllIcons.Actions.Preview
+                componentPopupMenu = documentMenu
+                isEnabled = documentMenu.componentCount > 0
             }
             val locateBtn = U.button("在工程中定位", true) {
                 WorkbenchNavigation.locateFeatureInProjectView(project, slug)
@@ -910,13 +950,8 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         progression?.objects("nextActions").orEmpty().takeIf { it.isNotEmpty() }?.let { featureHeader.add(nextActionsRow(it)) }
         featureHeader.border = JBUI.Borders.empty(0, 0, 8, 0)
 
-        tabs.setTitleAt(PLAN, if (totalCount > 0) "计划 $completedCount/$totalCount" else "计划")
-        renderTasks(); renderFeatureOverview(data); renderVerification()
-        committedChanges.showFeature(data, repositories())
-        changing = true
-        docPanel.setDocuments(files, data.get("documentReviews").obj())
-        selectedDocument = docPanel.activePath ?: selectedDocument ?: files.firstOrNull()?.str("path")
-        changing = false
+        tabs.setTitleAt(PLAN, "计划")
+        renderTasks()
         featureHeader.revalidate(); featureHeader.repaint(); editorTitle.text = title; loadVisible()
     }
 
@@ -1036,16 +1071,15 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         reviewService.refresh(root, slug, bindings)
     }
 
+    private fun taskStatus(task: JsonObject): String {
+        val trusted = task.get("trusted")?.takeIf { it.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull()
+        if (task.get("completed")?.asBoolean == true) return if (trusted == false) "待验证" else "已完成"
+        val dependencies = task.getAsJsonArray("dependencies")?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString }.orEmpty()
+        return if (dependencies.any { dependency -> tasks.none { it.str("id") == dependency && it.get("completed")?.asBoolean == true && it.get("trusted")?.takeIf { value -> value.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull() != false } }) "等待条件" else "可继续"
+    }
+
     private fun renderTasks() {
-        displayedTasks = tasks.filter {
-            when (taskFilter.selectedIndex) {
-                1 -> it.get("completed")?.asBoolean != true
-                2 -> it.get("completed")?.asBoolean == true
-                3 -> it.get("completed")?.asBoolean == true && it.get("trusted")?.takeIf { p -> p.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull() == true
-                4 -> it.get("completed")?.asBoolean == true && it.get("trusted")?.takeIf { p -> p.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull() == false
-                else -> true
-            }
-        }
+        displayedTasks = tasks.filter { taskFilter.selectedIndex == 0 || taskStatus(it) == taskFilter.selectedItem }
         val planSummary = detailData?.get("summary").obj()?.get("planSummary").obj()
         val trustedObj = planSummary?.get("trustedProgress").obj()
         val isTrustedApplicable = trustedObj?.get("applicable")?.asBoolean == true
@@ -1060,15 +1094,9 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         }
         planTitle.text = "实施计划 · $progressDesc"
 
+        val selectedTask = taskSelected()?.str("id") ?: selectedSlug?.let { slug -> state.kitRoot?.let { settings.featureView(it, slug).task } }
         setRows(taskTable, displayedTasks.map {
-            val isDone = it.get("completed")?.asBoolean == true
-            val trusted = it.get("trusted")?.takeIf { p -> p.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull()
-            val statusStr = when {
-                isDone && trusted == true -> "✓ 可信"
-                isDone && trusted == false -> "⚠ 缺凭据"
-                isDone -> "✓ 已完成"
-                else -> "○ 待完成"
-            }
+            val statusStr = taskStatus(it)
             val kind = it.str("validationKind")
             val titleDisplay = if (kind != null) "[$kind] ${it.str("title")}" else it.str("title")
             listOf(
@@ -1079,23 +1107,35 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                 "${it.str("path")}:${it.str("startLine")}"
             )
         })
+        val selectedRow = displayedTasks.indexOfFirst { it.str("id") == selectedTask }
+        if (selectedRow >= 0) taskTable.selectionModel.setSelectionInterval(selectedRow, selectedRow)
+        selectedSlug?.let(::restorePlanOffset)
+    }
+    private fun restorePlanOffset(slug: String) {
+        val root = state.kitRoot ?: return
+        planOffset = settings.featureView(root, slug).offset.coerceAtLeast(0)
+        pendingPlanOffset = if (planOffset > 0) slug to planOffset else null
+        SwingUtilities.invokeLater { applyPlanOffset() }
+    }
+    private fun applyPlanOffset() {
+        val (slug, offset) = pendingPlanOffset ?: return
+        if (disposed || selectedSlug != slug) { pendingPlanOffset = null; return }
+        val bar = planScrollPane.verticalScrollBar
+        if (planScrollPane.viewport.extentSize.height <= 0 || taskTable.height <= 0) return
+        pendingPlanOffset = null
+        changing = true
+        try { bar.value = offset } finally { changing = false }
     }
     private fun showDocument(path: String, line: Int? = null) {
         changing = true
-        tabs.selectedIndex = DOCUMENTS
-        selectedDocument = path
-        docPanel.selectDocument(path, fireEvent = false)
         changing = false
-        openDocument(path, line = line)
+        selectedSlug?.let { WorkbenchNavigation.openFeatureInEditor(project, it, path, line) }
     }
     private fun locateTask(task: JsonObject) {
         val path = task.str("path") ?: return
         changing = true
-        tabs.selectedIndex = DOCUMENTS
-        selectedDocument = path
-        docPanel.selectDocument(path, fireEvent = false)
         changing = false
-        openDocument(path, task.str("startLine")?.toIntOrNull(), taskKey = task.str("id") ?: task.str("title"))
+        selectedSlug?.let { WorkbenchNavigation.openFeatureInEditor(project, it, path, task.str("startLine")?.toIntOrNull()) }
     }
     private fun openDocument(path: String, line: Int? = null, retried: Boolean = false, taskKey: String? = null, anchor: String? = null) {
         val slug = selectedSlug ?: return
@@ -1166,7 +1206,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                 if (result.error != null) { documentStatus.text = "链接目标需求不可读取：$slug"; return@loadFeature }
                 val data = result.detail?.data.obj()?.takeIf { it.get("summary").obj()?.str("slug") == slug } ?: run { documentStatus.text = "链接目标需求不可读取：$slug"; return@loadFeature }
                 selectedSlug = slug; selectedDocument = relative.subpath(1, relative.nameCount).toString(); state = result
-                showFeature(data); navigate("feature"); tabs.selectedIndex = DOCUMENTS
+                showFeature(data); navigate("feature"); WorkbenchNavigation.openFeatureInEditor(project, slug, path)
                 openDocument(selectedDocument!!, anchor = uri.fragment)
             }
             return
@@ -1180,14 +1220,13 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         val slug=selectedSlug?:return
         if(checkCode) { checkingCode=true; renderVerification() }
         service.loadVerification(slug,checkCode) { result ->
-            if(disposed||selectedSlug!=slug) return@loadVerification
+            if(disposed||selectedSlug!=slug||route!="feature"||tabs.selectedIndex!=WORKFLOW) return@loadVerification
             if(checkCode) checkingCode=false
             if(result.error!=null) { notice.text="验证读取失败：${result.error}";notice.isVisible=true;renderVerification();return@loadVerification }
             verificationData=result.verification?.data.obj()?.takeIf { it.str("slug")==slug }?:return@loadVerification
-            renderVerification();detailData?.let(::renderFeatureOverview)
+            renderVerification()
             val revision=verificationData?.str("featureRevision")
             if(checkCode) checkedFeatureRevision=revision
-            else if(active&&route=="feature"&&tabs.selectedIndex==VERIFY&&revision!=checkedFeatureRevision&&verificationData?.get("selectedBatch").obj()!=null&&verificationData?.str("applicability")!="historical") queryVerification(true)
         }
     }
     private fun renderVerification() {
@@ -1268,41 +1307,60 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         verificationBody.revalidate();verificationBody.repaint()
     }
     private fun queryWorkflow() {
-        service.loadWorkflow { result ->
+        val featureFilter = selectedSlug.takeIf { route == "feature" }
+        if (featureFilter == null) service.loadWorkflow { result ->
             if(disposed) return@loadWorkflow
-            if(result.error!=null) { runStatus.text="读取失败，保留当前流程";return@loadWorkflow }
-            workflowData=result.workflow?.data.obj();renderWorkflow();renderExtensions();renderSidebar()
+            if(result.error!=null) return@loadWorkflow
+            workflowData=result.workflow?.data.obj();renderExtensions();renderSidebar()
         }
         // feature 上下文按需求由 Kit 服务端过滤（inspect runs --feature）；runs 全局页拉全量。
-        val featureFilter = selectedSlug.takeIf { route == "feature" }
         service.loadRuns(featureFilter) { result ->
-            if(disposed) return@loadRuns
-            if(result.error!=null) { runStatus.text="流程记录读取失败，保留当前内容";return@loadRuns }
+            if(disposed || (featureFilter != null && (selectedSlug != featureFilter || route != "feature" || tabs.selectedIndex != WORKFLOW)) || (featureFilter == null && route !in listOf("runs", "extensions"))) return@loadRuns
+            if(result.error!=null) { runStatus.text="流程记录读取失败";return@loadRuns }
             val previous=runPicker.selectedItem ?: state.kitRoot?.let { settings.preference(it).run.takeIf(String::isNotBlank) }
             changing=true;runPicker.removeAllItems()
             val records=result.runs?.data.obj()?.objects("items").orEmpty()
-            val pickerRecords = if (featureFilter != null) records else records.filter { it.str("featureSlug")==selectedSlug }
-            pickerRecords.forEach { runPicker.addItem(it.str("id")) }
+            val pickerRecords = if (featureFilter != null) records.filter { it.str("featureSlug") == featureFilter } else emptyList()
+            pickerRecords.mapNotNull { it.str("id") }.forEach(runPicker::addItem)
             if(previous!=null&&(0 until runPicker.itemCount).any { runPicker.getItemAt(it)==previous }) runPicker.selectedItem=previous
             changing=false
-            renderGlobalRuns(records, result.runs?.data.obj()?.get("counts").obj())
-            if(runPicker.itemCount>0) loadRun() else { runData=null;renderWorkflow() }
+            if(featureFilter == null) renderGlobalRuns(records, result.runs?.data.obj()?.get("counts").obj())
+            if(featureFilter != null) {
+                if(runPicker.itemCount>0) loadRun() else { runData=null;runStatus.text="无当前 Run";renderWorkflow() }
+            }
         }
     }
-    private fun loadRun() { val id=runPicker.selectedItem?.toString()?:return; runData=null;renderWorkflow();readRun(id) }
-    private fun readRun(id:String) {
+    private fun loadRun() { val id=runPicker.selectedItem?.toString()?:return; runData=null;runStatus.text="正在读取 Run…";renderWorkflow();readRun(id, selectedSlug.takeIf { route == "feature" }) }
+    private fun readRun(id:String, featureSlug:String? = null) {
         service.loadRun(id) { result ->
-            if(disposed) return@loadRun
-            if(result.error!=null) { runStatus.text="Run 读取失败，保留当前内容";return@loadRun }
-            runData=result.run?.data.obj()?.takeIf { it.str("id")==id };renderWorkflow()
+            if(disposed || (featureSlug != null && (selectedSlug != featureSlug || route != "feature" || tabs.selectedIndex != WORKFLOW || runPicker.selectedItem != id)) || (featureSlug == null && route != "runs")) return@loadRun
+            if(result.error!=null) { runStatus.text="Run 读取失败";return@loadRun }
+            runData=result.run?.data.obj()?.takeIf { it.str("id")==id && (featureSlug == null || it.str("featureSlug")==featureSlug) }
+            if(featureSlug != null) runStatus.text=if(runData==null) "无当前 Run" else "当前 Run：$id"
+            renderWorkflow()
             if(route=="runs") showRunDetail()
         }
     }
+    private var deliveryData: JsonObject? = null
     private fun renderWorkflow() {
         workflowBody.removeAll();val data=workflowData
-        runStatus.text=if(runPicker.itemCount==0) "此需求尚无 Run" else "来源：.workspace/runs/${runPicker.selectedItem}.json"
-        U.append(workflowBody,U.row(U.flow(U.badge("当前阶段建议"),U.label(U.stage(detailData?.get("progression").obj()?.str("currentStage")),11)),U.label("Core 阶段不推断完成；扩展展示所选 Run 的记录",10,U.faint)).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(0,0,18,0)) })
-        if(data==null) { U.append(workflowBody,U.empty("流程待读取","打开流程页后读取当前配置。"));return }
+        U.append(workflowBody, U.section("交付事实"), 12)
+        val delivery = deliveryData
+        listOf("commit" to "交付 commit", "pullRequest" to "PR / MR", "deployment" to "部署版本", "externalAcceptance" to "外部验收").forEach { (key, label) ->
+            val value = delivery?.get(key)
+            val text = when {
+                value == null || value.isJsonNull -> "未知"
+                value.isJsonPrimitive -> value.asString.takeUnless { it == "unknown" || it.isBlank() } ?: "未知"
+                else -> value.toString()
+            }
+            U.append(workflowBody, U.label("$label：$text", 11, U.muted), 6)
+        }
+        val verification = delivery?.get("verification").obj()
+        U.append(workflowBody, U.label("验证记录：${if (verification?.get("exists")?.asBoolean == true) "已存在" else "未记录"} · 代码状态：${U.state(verification?.str("codeState"))}", 11, U.muted), 6)
+        U.append(workflowBody, verificationBody, 12)
+        U.append(workflowBody,U.row(U.flow(U.badge("当前阶段建议"),U.label(U.stage(detailData?.get("progression").obj()?.str("currentStage")),11)),U.label("阶段建议不代表真实部署或验收",10,U.faint)).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(0,0,18,0)) })
+        if(data==null) { U.append(workflowBody,U.empty("流程待读取","打开流程页后读取当前配置。"));workflowBody.revalidate();workflowBody.repaint();return }
+        if(route=="feature" && tabs.selectedIndex==WORKFLOW && runData==null) U.append(workflowBody,U.label("无当前 Run",11,U.muted),10)
         if(data.get("orderedStages")?.isJsonNull!=false) U.append(workflowBody,U.copy("流程配置不可解析，无法展示有效顺序。已有 Run 原文仍可查看。"),16)
         val records=runData?.objects("records").orEmpty().associateBy { it.str("stage") }
         data.objects("orderedStages").forEach { stage ->
@@ -1411,7 +1469,31 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             "runs" -> { showWorkflowLoading(); queryWorkflow() }
             "extensions" -> { showWorkflowLoading(); queryWorkflow(); runDescribe() }
             "diagnostics" -> runDoctor()
-            "feature" -> when(tabs.selectedIndex) { CHANGES -> if(featureChangesTabs.selectedIndex==REVIEW_CHANGES) refreshReviews(); DOCUMENTS -> (selectedDocument ?: docPanel.activePath)?.let { openDocument(it) };VERIFY -> queryVerification();WORKFLOW -> { showWorkflowLoading(); queryWorkflow() } }
+            "feature" -> when(tabs.selectedIndex) {
+                CHANGES -> selectedSlug?.let { slug -> service.loadProjection(slug, "change") { result ->
+                    if (disposed || selectedSlug != slug) return@loadProjection
+                    if (result.error != null) { notice.text = result.error; notice.isVisible = true; return@loadProjection }
+                    val change = result.change?.data.obj() ?: return@loadProjection
+                    val summary = detailData?.get("summary").obj()?.deepCopy() ?: return@loadProjection
+                    summary.add("repositoryBindings", change.get("repositories"))
+                    committedChanges.showFeature(com.google.gson.JsonObject().apply { add("summary", summary) }, repositories())
+                    if (featureChangesTabs.selectedIndex == REVIEW_CHANGES) refreshReviews(slug, summary, repositoryRoots(repositories()))
+                    notice.isVisible = false
+                } }
+                WORKFLOW -> selectedSlug?.let { slug ->
+                    runStatus.text = "正在读取当前 Feature 流程…"
+                    service.loadProjection(slug, "flow") { result ->
+                        if (disposed || selectedSlug != slug || route != "feature" || tabs.selectedIndex != WORKFLOW) return@loadProjection
+                        if (result.error != null) { runStatus.text = result.error; return@loadProjection }
+                        val flow = result.flow?.data.obj() ?: return@loadProjection
+                        workflowData = flow.get("workflow").obj()
+                        deliveryData = flow.get("delivery").obj()
+                        renderWorkflow()
+                        queryVerification()
+                        queryWorkflow()
+                    }
+                }
+            }
         }
     }
     private fun showWorkflowLoading() {
@@ -1424,8 +1506,15 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         state.kitRoot?.let { root -> state.python?.let { python -> service.bind(root,python) { refresh() } } }
         if(route=="feature") restoreFeature()
     }
-    private fun remember() { if(!changing) state.kitRoot?.let { settings.preference(it).apply { query=search.text;status=lifecycle.selectedItem.toString();tab=tabs.selectedIndex;feature=selectedSlug.orEmpty();document=selectedDocument.orEmpty();run=runPicker.selectedItem?.toString().orEmpty() } } }
-    private fun restore() { state.kitRoot?.let { root -> settings.preference(root).let { saved -> changing=true;search.text=saved.query;lifecycle.selectedItem=settings.featureStatus(root);selectedSlug=saved.feature.takeIf(String::isNotBlank);selectedDocument=saved.document.takeIf(String::isNotBlank);tabs.selectedIndex=saved.tab.coerceIn(0,tabs.tabCount-1);changing=false } } }
+    private fun remember() { if(!changing) state.kitRoot?.let { root ->
+        settings.preference(root).apply { query=search.text;status=lifecycle.selectedItem.toString();feature=selectedSlug.orEmpty();document=selectedDocument.orEmpty();run=runPicker.selectedItem?.toString().orEmpty() }
+        selectedSlug?.let { slug -> settings.featureView(root, slug).apply {
+            tab=tabs.selectedIndex;changeTab=featureChangesTabs.selectedIndex;filter=taskFilter.selectedItem?.toString().orEmpty()
+            task=taskSelected()?.str("id") ?: task;startCommit=committedChanges.selectedStartCommit()
+            if (pendingPlanOffset?.first != slug && tabs.selectedIndex == PLAN && route == "feature") offset=planOffset
+        } }
+    } }
+    private fun restore() { state.kitRoot?.let { root -> settings.preference(root).let { saved -> changing=true;search.text=saved.query;lifecycle.selectedItem=settings.featureStatus(root);selectedSlug=saved.feature.takeIf(String::isNotBlank);selectedDocument=saved.document.takeIf(String::isNotBlank);selectedSlug?.let { slug -> val view=settings.featureView(root,slug);tabs.selectedIndex=view.tab.coerceIn(0,tabs.tabCount-1);featureChangesTabs.selectedIndex=view.changeTab.coerceIn(0,featureChangesTabs.tabCount-1);taskFilter.selectedItem=view.filter.takeIf { value -> (0 until taskFilter.itemCount).any { taskFilter.getItemAt(it) == value } } ?: "全部任务";committedChanges.restoreLocation(view.repository,view.file,view.startCommit) };changing=false } } }
     private fun restoreFeature() { selectedSlug?.let { slug -> service.loadFeature(slug) { latest -> if(!disposed&&selectedSlug==slug) {
         if(latest.error!=null) { notice.text="读取失败：${latest.error}，保留上次成功内容";notice.isVisible=true }
         else latest.detail?.data.obj()?.takeIf { it.get("summary").obj()?.str("slug")==slug }?.let { state=latest;showFeature(it) }
@@ -1454,8 +1543,9 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         val changes = pendingKit.toSet(); pendingKit.clear()
         if (changes.isEmpty()) return
         if ("workspace" in changes || "features" in changes) state.kitRoot?.let { r -> state.python?.let { p -> service.bind(r, p) { refresh() } } }
-        if ("feature" in changes && route == "feature") { restoreFeature(); if (tabs.selectedIndex == VERIFY) queryVerification() }
-        if ("workflow" in changes && (route in listOf("runs", "extensions") || (route == "feature" && tabs.selectedIndex == WORKFLOW))) queryWorkflow()
+        if ("feature" in changes && route == "feature") restoreFeature()
+        if ("workflow" in changes && route in listOf("runs", "extensions")) queryWorkflow()
+        if ("workflow" in changes && route == "feature" && tabs.selectedIndex == WORKFLOW) loadVisible()
     }
     private fun runDoctor(force: Boolean = false) {
         val root = state.kitRoot ?: return
@@ -1644,13 +1734,11 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     
     private fun documentFiles(data:JsonObject) = (data.objects("files")+data.objects("artifacts").map { it.deepCopy().apply { addProperty("exists",true) } }).distinctBy { it.str("path") }
     companion object {
-        const val SUMMARY = 0
-        const val DOCUMENTS = 1
-        const val PLAN = 2
-        const val CHANGES = 3
+        const val PLAN = 0
+        const val CHANGES = 1
         const val REVIEW_CHANGES = 0
-        const val VERIFY = 4
-        const val WORKFLOW = 5
+        const val COMMITTED_CHANGES = 1
+        const val WORKFLOW = 2
     }
 }
 

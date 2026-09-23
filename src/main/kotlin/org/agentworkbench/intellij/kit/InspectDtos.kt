@@ -144,6 +144,17 @@ internal object InspectProtocol {
         "features", "runs" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..200) { "Inspect page limit 无效" }; data.requiredArray("items") }
         "search" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..50) { "Inspect search page limit 无效" }; data.requiredString("query"); data.requiredArray("items"); SearchData.parse(data) }
         "feature" -> { data.requiredObject("summary"); data.requiredArray("tasks"); data.requiredArray("files"); data.requiredArray("artifacts"); data.requiredObject("progression"); data.requiredString("featureRevision") }
+        "projection" -> {
+            data.requiredString("featureRevision")
+            when (data.requiredString("view")) {
+                "summary" -> data.requiredObject("summary")
+                "task" -> { data.requiredObject("summary"); data.requiredArray("tasks"); data.requiredObject("progression") }
+                "change" -> { data.requiredArray("repositories"); data.requiredObject("comparison") }
+                "flow" -> { data.requiredString("status"); data.requiredObject("workflow"); data.requiredObject("delivery") }
+                "handoff" -> data.requiredObject("handoff")
+                else -> error("Inspect projection view 无效")
+            }
+        }
         "handoff" -> { data.requiredObject("progression"); data.requiredString("featureRevision"); HandoffData.parse(data) }
         "document" -> { data.requiredString("path"); data.requiredString("revision"); data.requiredString("content") }
         "verification" -> {

@@ -44,8 +44,20 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
     private val repository=JComboBox<String>()
     private val branchSummary=U.label("选择仓库后查看需求分支",11,U.muted)
     private val message=U.label("选择需求后查看记录分支的已提交变更",12,U.muted)
+    private val overview=U.column(4)
+    private val startField=javax.swing.JTextField(16).apply { toolTipText = "仅输入已记录或您明确选择的接手起点 commit；留空使用分支共同祖先" }
+    var onLocationChanged: ((String, String) -> Unit)? = null
+    private var restoredRepository: String? = null
+    private var restoredFile: String? = null
     private val files=DefaultListModel<String>()
+    private lateinit var fileList: JBList<String>
     private val commits=DefaultListModel<String>()
+    private var featureIdentity: String? = null
+    private var successfulOverviewLines = emptyList<String>()
+    private var successfulBranchSummary: String? = null
+    private var successfulFiles = emptyList<String>()
+    private var successfulCommits = emptyList<String>()
+    private var successfulRepository: String? = null
     private val fetchBtn: javax.swing.JButton = U.button("抓取远程 (Fetch)") {
         val repoName = repository.selectedItem as? String ?: return@button
         val root = roots[repoName] ?: return@button
@@ -71,19 +83,8 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
     }
     private val diff: javax.swing.JButton = U.button("打开已提交 Diff") {
         selected?.let { (root,comparison) ->
-            val binding = bindings.firstOrNull { it.str("repository") == repository.selectedItem }
-            val workBranch = binding?.str("workBranch") ?: comparison.work
-            val rawBase = binding?.str("baseBranch") ?: comparison.mergeBase
-            val remoteBase = if (rawBase.startsWith("origin/") || rawBase.startsWith("refs/")) rawBase else "origin/$rawBase"
-            val hasRemote = runCatching { HostGit(project).repository(root).branches.findRemoteBranch(remoteBase) != null }.getOrDefault(false)
-            val targetBase = if (hasRemote) remoteBase else rawBase
-
-            HostGit(project).showCommittedDiff(root, targetBase, workBranch).onFailure {
-                HostGit(project).showCommittedDiff(root, rawBase, workBranch).onFailure {
-                    HostGit(project).showCommittedDiff(root, comparison.mergeBase, comparison.work).onFailure { err ->
-                        message.text = err.message
-                    }
-                }
+            HostGit(project).showCommittedDiff(root, comparison.base, comparison.work).onFailure { err ->
+                message.text = "Diff 打开失败：${err.message ?: "未知错误"}"
             }
         }
     }.apply {
@@ -96,6 +97,7 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
     private var future:Future<*>?=null
     private var disposed=false
     private var updatingRepository=false
+    private var updatingFiles=false
 
     private fun openSelectedFile(fileRelPath: String) {
         val root = selected?.first ?: return
@@ -106,15 +108,13 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
 
         HostGit(project).showBranchDiff(
             root = root,
-            baseCommit = comparison.mergeBase,
+            baseCommit = comparison.base,
             workCommit = comparison.work,
             relativePath = fileRelPath,
             baseLabel = baseName,
             workLabel = workName
-        ).onFailure {
-            HostGit(project).showWorkspaceDiff(root, comparison.mergeBase, fileRelPath).onFailure { error ->
-                com.intellij.openapi.ui.Messages.showErrorDialog(project, error.message ?: "无法加载 Diff 视图", "Diff 加载失败")
-            }
+        ).onFailure { error ->
+            com.intellij.openapi.ui.Messages.showErrorDialog(project, error.message ?: "无法加载 Diff 视图", "Diff 加载失败")
         }
     }
 
@@ -142,8 +142,14 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
 
     init {
         background=U.bg;U.combo(repository)
-        add(U.column(8,U.row(U.flow(U.label("关联仓库",11,U.muted),repository),U.flow(fetchBtn,diff)),branchSummary,message).apply { border=com.intellij.util.ui.JBUI.Borders.empty(12,0,8,0) },BorderLayout.NORTH)
-        val fileList=JBList(files).apply {
+        add(U.column(8,U.row(U.flow(U.label("关联仓库",11,U.muted),repository,U.label("接手起点",11,U.muted),startField),U.flow(fetchBtn,diff)),overview,branchSummary,message).apply { border=com.intellij.util.ui.JBUI.Borders.empty(12,0,8,0) },BorderLayout.NORTH)
+        startField.addActionListener { load() }
+        startField.getDocument().addDocumentListener(object : javax.swing.event.DocumentListener {
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent) = invalidateComparison()
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent) = invalidateComparison()
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent) = invalidateComparison()
+        })
+        fileList=JBList(files).apply {
             background=U.bg;foreground=U.text;fixedCellHeight=32;border=com.intellij.util.ui.JBUI.Borders.empty(4);font=U.mono("").font
             emptyText.text = "暂无变更文件"
             cellRenderer = object : ColoredListCellRenderer<String>() {
@@ -181,6 +187,7 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
 
         ListSpeedSearch.installOn(fileList)
         ListSpeedSearch.installOn(commitList)
+        fileList.addListSelectionListener { if (!it.valueIsAdjusting && !updatingFiles) onLocationChanged?.invoke(repository.selectedItem as? String ?: "", fileList.selectedValue ?: "") }
 
         fileList.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
@@ -238,15 +245,91 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
             background = U.bg
         }
         add(splitter, BorderLayout.CENTER)
-        diff.isEnabled=false;repository.addActionListener { if(!updatingRepository) load() }
+        diff.isEnabled=false;repository.addActionListener { if(!updatingRepository) { onLocationChanged?.invoke(repository.selectedItem as? String ?: "", ""); load() } }
     }
+    private fun invalidateComparison() {
+        future?.cancel(true)
+        generation++
+        selected = null
+        diff.isEnabled = false
+        if (successfulRepository == repository.selectedItem) restoreSuccessfulComparisonAsStale()
+        message.text = "接手起点已变更；请按回车重新比较"
+        message.foreground = U.amber
+    }
+    private fun clearVisibleComparison() {
+        future?.cancel(true)
+        generation++
+        selected = null
+        diff.isEnabled = false
+        overview.removeAll()
+        branchSummary.text = "选择仓库后查看需求分支"
+        branchSummary.foreground = U.muted
+        updatingFiles = true
+        try { files.clear(); commits.clear() } finally { updatingFiles = false }
+        message.text = "选择需求后查看记录分支的已提交变更"
+        message.foreground = U.muted
+    }
+    private fun clearSuccessfulComparison() {
+        successfulOverviewLines = emptyList()
+        successfulBranchSummary = null
+        successfulFiles = emptyList()
+        successfulCommits = emptyList()
+        successfulRepository = null
+    }
+    private fun renderOverview(lines: List<String>, stale: Boolean, failure: Boolean = false) {
+        overview.removeAll()
+        lines.forEach { line ->
+            U.append(overview, U.label(if (stale) "$line · 过期" else line, 11, if (stale || failure) U.amber else U.muted))
+        }
+    }
+    private fun overviewLine(name: String, scene: NativeGit.Snapshot, comparison: NativeGit.Comparison): String {
+        val range = when (comparison) {
+            is NativeGit.Comparison.Available -> "${comparison.base.take(10)} → ${comparison.work.take(10)} · ${comparison.files.size} 文件"
+            is NativeGit.Comparison.Unavailable -> "读取失败：${comparison.reason}"
+        }
+        val dirty = when (scene) {
+            is NativeGit.Snapshot.Available -> "工作目录 ${scene.changes} 项"
+            is NativeGit.Snapshot.Unavailable -> "工作目录读取失败：${scene.reason}"
+        }
+        return "$name · $range · $dirty"
+    }
+    private fun restoreSuccessfulComparisonAsStale() {
+        if (successfulOverviewLines.isNotEmpty()) renderOverview(successfulOverviewLines, stale = true)
+        successfulBranchSummary?.let {
+            branchSummary.text = "$it · 过期"
+            branchSummary.foreground = U.amber
+        }
+        if (successfulFiles.isNotEmpty() || successfulCommits.isNotEmpty()) {
+            updatingFiles = true
+            try {
+                files.clear(); commits.clear()
+                successfulFiles.forEach(files::addElement)
+                successfulCommits.forEach(commits::addElement)
+            } finally { updatingFiles = false }
+        }
+    }
+    fun restoreLocation(repo: String, file: String, start: String) {
+        restoredRepository = repo.takeIf(String::isNotBlank)
+        restoredFile = file.takeIf(String::isNotBlank)
+        startField.text = start
+        clearVisibleComparison()
+    }
+    fun selectedStartCommit(): String = startField.text.trim()
     fun showFeature(feature:JsonObject,repositories:List<JsonObject>) {
-        val newBindings = feature.getAsJsonObject("summary")?.getAsJsonArray("repositoryBindings")?.map { it.asJsonObject } ?: emptyList()
+        val summary = feature.getAsJsonObject("summary")
+        val identity = summary?.str("slug") ?: summary?.str("path") ?: summary?.toString()
+        if (featureIdentity != identity) {
+            clearSuccessfulComparison()
+            clearVisibleComparison()
+        }
+        featureIdentity = identity
+        val newBindings = summary?.getAsJsonArray("repositoryBindings")?.map { it.asJsonObject } ?: emptyList()
         val newRoots = repositories.associate { it.get("id").asString to Path.of(it.get("absolutePath").asString) }
         this.bindings = newBindings
         this.roots = newRoots
 
-        val currentSelected = repository.selectedItem as? String
+        val currentSelected = restoredRepository ?: repository.selectedItem as? String
+        restoredRepository = null
         val newRepoNames = newBindings.mapNotNull { it.str("repository") }
         val existingItems = (0 until repository.itemCount).map { repository.getItemAt(it) }
 
@@ -265,25 +348,71 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
         load()
     }
     private fun load() {
-        future?.cancel(true);val request=++generation;selected=null;diff.isEnabled=false;files.clear();commits.clear()
-        val binding=bindings.firstOrNull { it.str("repository")==repository.selectedItem }?:return
-        val name=binding.str("repository")?:return;val root=roots[name]?:return
-        val base=binding.str("baseBranch");val work=binding.str("workBranch")
-        if(base==null||work==null) { message.text="需求未记录完整工作分支和基线";return }
-        branchSummary.text="$base → $work"
-        message.text="正在比较 $name：$base → $work"
+        future?.cancel(true);val request=++generation
+        val chosen = repository.selectedItem as? String
+        val start = startField.text.trim().takeIf(String::isNotEmpty)
+        message.text = "正在读取仓库比较…"
+        diff.isEnabled = false
+        selected = null
         future=ApplicationManager.getApplication().executeOnPooledThread {
-            val git=NativeGit.forProject(project);val scene=git.snapshot(root.toFile())
-            val comparison=runCatching { git.comparison(root.toFile(),base,work) }.getOrElse { NativeGit.Comparison.Unavailable(it.message?:"比较不可用") }
+            val git=NativeGit.forProject(project)
+            val results = bindings.mapNotNull { binding ->
+                val name = binding.str("repository") ?: return@mapNotNull null
+                val root = roots[name]
+                val scene = root?.let { git.snapshot(it.toFile()) } ?: NativeGit.Snapshot.Unavailable("未找到关联仓库目录")
+                val base = binding.str("baseBranch")
+                val work = binding.str("workBranch")
+                val recorded = binding.str("startCommit") ?: binding.str("handoffCommit")
+                val comparison = if (root == null || base.isNullOrBlank() || work.isNullOrBlank()) NativeGit.Comparison.Unavailable("仓库目录或比较分支未记录")
+                    else git.comparison(root.toFile(), base, work, if (name == chosen) start ?: recorded else recorded)
+                Triple(name, scene, comparison)
+            }
             ApplicationManager.getApplication().invokeLater {
                 if(disposed||generation!=request) return@invokeLater
-                branchSummary.text="$base → $work · 当前检出 ${(scene as? NativeGit.Snapshot.Available)?.branch?:"不可用"}"
-                when(comparison) {
-                    is NativeGit.Comparison.Unavailable -> { message.text=comparison.reason;message.foreground=U.amber }
+                val overviewLines = results.map { (name, scene, comparison) -> overviewLine(name, scene, comparison) }
+                val current = results.firstOrNull { it.first == chosen }
+                val comparison = current?.third
+                val scene = current?.second
+                when (comparison) {
+                    is NativeGit.Comparison.Unavailable -> {
+                        val hasPrevious = successfulOverviewLines.isNotEmpty() && successfulRepository == chosen
+                        if (hasPrevious) restoreSuccessfulComparisonAsStale()
+                        else {
+                            branchSummary.text = "选择仓库后查看需求分支"
+                            branchSummary.foreground = U.muted
+                            updatingFiles = true
+                            try { files.clear(); commits.clear() } finally { updatingFiles = false }
+                            renderOverview(overviewLines, stale = false, failure = true)
+                        }
+                        message.text = "读取失败：${comparison.reason}" + if (hasPrevious) "；上次成功内容已过期" else ""
+                        message.foreground = U.amber
+                    }
                     is NativeGit.Comparison.Available -> {
-                        selected=root to comparison;diff.isEnabled=true;message.foreground=U.muted
-                        message.text="${comparison.commits.size} 个提交 · ${comparison.files.size} 个文件 · 工作目录修改不包含在此范围"
-                        comparison.files.forEach(files::addElement);comparison.commits.forEach(commits::addElement)
+                        val root = roots[chosen]
+                        if (root != null) {
+                            selected = root to comparison; diff.isEnabled = true
+                            val previousFile = restoredFile ?: fileList.selectedValue
+                            updatingFiles = true
+                            try {
+                                files.clear(); commits.clear()
+                                comparison.files.forEach(files::addElement);comparison.commits.forEach(commits::addElement)
+                                previousFile?.let { file -> fileList.setSelectedValue(file, true) }
+                            } finally { updatingFiles = false; restoredFile = null }
+                        }
+                        branchSummary.text = "实际比较：${comparison.base} → ${comparison.work} · 共同祖先 ${comparison.mergeBase} · 当前检出 ${(scene as? NativeGit.Snapshot.Available)?.branch ?: "未知"}"
+                        branchSummary.foreground = U.muted
+                        message.foreground=U.muted
+                        message.text="${comparison.commits.size} 个提交 · ${comparison.files.size} 个文件 · 工作目录变更单独展示（不自动归因）"
+                        renderOverview(overviewLines, stale = false)
+                        successfulOverviewLines = overviewLines
+                        successfulBranchSummary = branchSummary.text
+                        successfulFiles = comparison.files
+                        successfulCommits = comparison.commits
+                        successfulRepository = chosen
+                    }
+                    null -> {
+                        overview.removeAll()
+                        message.text = "无关联仓库"; message.foreground = U.amber
                     }
                 }
                 revalidate();repaint()

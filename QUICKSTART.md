@@ -12,7 +12,7 @@
    * **Windows / Linux**：`File` ➔ `Settings...`（快捷键 `Ctrl + Alt + S`）
 2. 在左侧导航栏选择 **Plugins（插件）**；
 3. 点击右上角的 ⚙️ 齿轮图标，选择 **Install Plugin from Disk...（从磁盘安装插件）**；
-4. 选择本项目的构建包（如 `build/distributions/agent-workbench-intellij-0.3.zip`）；
+4. 选择本项目的构建包（如 `build/distributions/agent-workbench-intellij-0.5.0.zip`）；
 5. 安装完成后根据提示重启 IDE。
 
 ---
@@ -88,7 +88,7 @@ my-project-workspace/              # 用 IDEA 打开此父目录
    * 插件会直接基于底层 Git Object 提取 **基线分支 ➔ 需求分支** 的纯净改动；
 3. **查看单文件比对**：
    * 双击【变更文件】列表中的任何文件（或按回车），立即呼出 IDEA 原生双栏 Diff 窗口（左侧为基线版本，右侧为需求分支版本，新增代码绿色高亮）；
-4. **全仓已提交 Diff**：
+4. **全仓已提交 Diff**：先在「变更 → 需求分支已提交」查看多仓摘要和实际比较起止；接手起点只输入已记录或明确选择的 commit（留空使用记录分支的共同祖先）。读取失败不会当作零变更，也不会自动换到工作目录 Diff。
    * 点击右上角的 **`[⇥ 打开已提交 Diff]`** 按钮，直接唤起 IntelliJ 原生双分支比较器，完整查看所有提交记录与修改树。
 
 ---

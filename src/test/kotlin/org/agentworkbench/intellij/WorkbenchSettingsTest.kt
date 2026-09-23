@@ -32,6 +32,27 @@ class WorkbenchSettingsTest {
         assertTrue(settings.preference(first.toString()).positions.none { it.key == "document-0" })
     }
 
+    @Test fun featureViewMigratesGlobalTabOnlyOnceAndIsolatesSelections() {
+        val settings = WorkbenchSettings()
+        val root = Files.createTempDirectory("workbench-view").toString()
+        settings.preference(root).tab = 2
+        val first = settings.featureView(root, "first")
+        assertEquals(2, first.tab)
+        first.tab = 1
+        first.task = "T06"
+        first.repository = "service"
+        first.file = "src/A.kt"
+        first.filter = "待验证"
+        first.offset = 42
+        settings.preference(root).tab = 0
+        val second = settings.featureView(root, "second")
+        assertEquals(0, second.tab)
+        assertEquals("", second.task)
+        assertEquals(1, settings.featureView(root, "first").tab)
+        assertEquals("src/A.kt", settings.featureView(root, "first").file)
+        assertEquals(42, settings.featureView(root, "first").offset)
+    }
+
     @Test fun discoversKitInCurrentOrDirectAgentWorkbenchDirectory() {
         val parent = Files.createTempDirectory("workbench-parent")
         val child = Files.createDirectories(parent.resolve("agent-workbench/scripts"))

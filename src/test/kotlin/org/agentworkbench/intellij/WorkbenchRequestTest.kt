@@ -19,6 +19,15 @@ class WorkbenchRequestTest : BasePlatformTestCase() {
             val bytes = javaClass.getResourceAsStream("/inspect-v1/$operation.json")!!.use { it.readBytes() }
             Files.write(kit.resolve("$operation.json"), bytes)
         }
+        val feature = com.google.gson.JsonParser.parseString(Files.readString(kit.resolve("feature.json"))).asJsonObject
+        val projection = feature.deepCopy().apply {
+            addProperty("operation", "projection")
+            getAsJsonObject("data").apply { addProperty("view", "task") }
+        }
+        Files.writeString(kit.resolve("projection.json"), projection.toString())
+        val workspace = com.google.gson.JsonParser.parseString(Files.readString(kit.resolve("workspace.json"))).asJsonObject
+        workspace.getAsJsonObject("data").getAsJsonObject("protocol").getAsJsonArray("operations").add("projection")
+        Files.writeString(kit.resolve("workspace.json"), workspace.toString())
         Files.writeString(kit.resolve("scripts/kit.py"), """
             import json,pathlib,sys,time
             if sys.argv[1]=='brief': print('legacy brief'); sys.exit(0)
@@ -28,7 +37,7 @@ class WorkbenchRequestTest : BasePlatformTestCase() {
             data=json.loads((root/(op+'.json')).read_text())
             data['root']=str(root)
             if op=='features': data['data']['page']['hasMore']=False
-            if op=='feature':
+            if op in ('feature','projection'):
                 slug=sys.argv[sys.argv.index('--json')+2]
                 if slug=='slow': time.sleep(0.8)
                 data['data']['summary']['slug']=slug
