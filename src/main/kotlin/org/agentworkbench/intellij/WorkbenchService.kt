@@ -38,6 +38,9 @@ internal class WorkbenchService(private val project: Project) : Disposable {
     private val lock = Any()
     @Volatile private var disposed = false
     @Volatile private var snapshot = Snapshot.empty()
+    @Volatile private var detailGeneration = 0L
+    @Volatile private var documentGeneration = 0L
+    @Volatile private var verificationGeneration = 0L
 
     @Volatile private var currentBranchSlug: String? = null
     private val vfsDebounce = java.util.concurrent.atomic.AtomicReference<Job?>(null)
@@ -150,13 +153,17 @@ internal class WorkbenchService(private val project: Project) : Disposable {
 
     fun loadProjection(slug: String, view: String, callback: (Snapshot) -> Unit) {
         require(view in setOf("task", "change", "flow")) { "不支持的详情视图" }
-        synchronized(lock) { snapshot = snapshot.copy(selectedDetail = slug, selectedHandoff = null) }
+        val selection = synchronized(lock) {
+            if (snapshot.selectedDetail != slug) detailGeneration++
+            snapshot = snapshot.copy(selectedDetail = slug, selectedHandoff = null)
+            detailGeneration
+        }
         val current = snapshot
         if (!supports("projection") && current.workspace != null) {
             deliver(callback, current.copy(error = "当前 Kit 版本不兼容：缺少 inspect projection，请升级 Kit。"))
             return
         }
-        requestFor("projection", "$slug:$view", callback, listOf(slug, "--view", view), relevant = { it.selectedDetail == slug }) { state, response ->
+        requestFor("projection", "$slug:$view", callback, listOf(slug, "--view", view), relevant = { it.selectedDetail == slug && detailGeneration == selection }) { state, response ->
             if (response.status == "partial") {
                 state.copy(error = "${view} 详情不完整：${response.diagnostics.joinToString("; ") { it.message }.ifBlank { "Kit 返回 partial" }}；保留上次内容")
             } else if (response.data?.asJsonObject?.get("view")?.asString != view) {
@@ -170,10 +177,22 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             } else state
         }
     }
-    fun loadDocument(slug: String, path: String, revision: String?, callback: (Snapshot) -> Unit) = requestFor("document", "$slug:$path", callback, listOf(slug, "--path", path) + (revision?.let { listOf("--document-revision", it) } ?: emptyList())) { state, response -> state.copy(document = response, error = null) }
+    fun loadDocument(slug: String, path: String, revision: String?, callback: (Snapshot) -> Unit) {
+        val identity = synchronized(lock) { detailGeneration to ++documentGeneration }
+        requestFor("document", "$slug:$path", callback, listOf(slug, "--path", path) + (revision?.let { listOf("--document-revision", it) } ?: emptyList()),
+            relevant = { it.selectedDetail == slug && detailGeneration == identity.first && documentGeneration == identity.second }) { state, response ->
+            state.copy(document = response, error = null)
+        }
+    }
     fun loadVerification(slug: String, callback: (Snapshot) -> Unit) = loadVerification(slug, false, callback)
-    fun loadVerification(slug: String, checkCode: Boolean, callback: (Snapshot) -> Unit) =
-        requestFor("verification", "$slug:${if (checkCode) "code" else "records"}", callback, listOf(slug) + if (checkCode) listOf("--check-code") else emptyList()) { state, response -> state.copy(verification = response, error = null) }
+    fun loadVerification(slug: String, checkCode: Boolean, callback: (Snapshot) -> Unit) {
+        val identity = synchronized(lock) { detailGeneration to ++verificationGeneration }
+        requestFor("verification", "$slug:${if (checkCode) "code" else "records"}", callback,
+            listOf(slug) + if (checkCode) listOf("--check-code") else emptyList(),
+            relevant = { it.selectedDetail == slug && detailGeneration == identity.first && verificationGeneration == identity.second }) { state, response ->
+            state.copy(verification = response, error = null)
+        }
+    }
     fun loadWorkflow(callback: (Snapshot) -> Unit) = requestFor("workflow", "", callback) { state, response -> state.copy(workflow = response, error = null) }
     fun loadHandoff(slug: String, callback: (Snapshot) -> Unit) {
         synchronized(lock) { snapshot = snapshot.copy(selectedHandoff = slug) }
@@ -235,6 +254,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             }
             if (!coordinator.isCurrent(key, generation)) return@launch
             synchronized(lock) {
+                if (!relevant(snapshot) || !coordinator.isCurrent(key, generation)) return@launch
                 if (result.isSuccess) {
                     val (update, response) = result.getOrThrow()
                     val next = update(snapshot, response)
@@ -265,7 +285,9 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             val items = com.google.gson.JsonArray(); var offset = 0; var first: InspectResponse? = null
             while (true) {
                 val page = client.inspect(operation, baseArguments + listOf("--offset", offset.toString(), "--limit", "200")).getOrThrow()
-                if (first != null && first!!.revision != page.revision) break
+                val collection = page.data?.asJsonObject?.get("collectionRevision")?.asString
+                    ?: error("列表响应缺少集合版本，请同步更新 Kit")
+                if (first != null && first!!.data!!.asJsonObject.get("collectionRevision").asString != collection) break
                 if (first == null) first = page
                 val data = page.data?.asJsonObject ?: error("WorkItem 列表数据无效")
                 val chunk = data.getAsJsonArray("items") ?: error("列表数据无效")

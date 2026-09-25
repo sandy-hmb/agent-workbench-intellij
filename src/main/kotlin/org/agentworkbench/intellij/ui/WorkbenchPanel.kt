@@ -1395,17 +1395,10 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     /** 把 .workspace 下的文件变化映射到需要重查的具体数据类别，去抖后按需刷新。 */
     private fun classifyKitChanges(events: List<VFileEvent>) {
         val kit = state.kitRoot ?: return
-        val prefix = "$kit/.workspace/"
         var touched = false
         events.forEach { event ->
-            if (!event.path.startsWith(prefix)) return@forEach
-            val rel = event.path.removePrefix(prefix)
-            touched = true
-            when {
-                rel.startsWith("items/") -> { pendingKit += "items"; if (rel.split('/').getOrNull(2) == selectedSlug) pendingKit += "item" }
-                rel.startsWith("runs/") || rel == "workflow.json" || rel.startsWith("extensions/") -> pendingKit += "workflow"
-                else -> pendingKit += "workspace"
-            }
+            val changes = classifyWorkItemChange(kit, event.path, selectedSlug)
+            if (changes.isNotEmpty()) { touched = true; pendingKit.addAll(changes) }
         }
         if (touched && active) kitDebounce.restart()
     }
@@ -1611,6 +1604,19 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         const val COMMITTED_CHANGES = 1
         const val WORKFLOW = 2
     }
+}
+
+/** Shared path classification for current workspace and Kit maintenance items. */
+internal fun classifyWorkItemChange(kit: String, path: String, selectedSlug: String?): Set<String> {
+    val itemRoot = listOf("$kit/.workspace/items/", "$kit/docs/development/items/").firstOrNull(path::startsWith)
+    if (itemRoot != null) {
+        val slug = path.removePrefix(itemRoot).substringBefore('/')
+        return if (slug == selectedSlug) setOf("items", "item") else setOf("items")
+    }
+    val prefix = "$kit/.workspace/"
+    if (!path.startsWith(prefix)) return emptySet()
+    val relative = path.removePrefix(prefix)
+    return if (relative.startsWith("runs/") || relative == "workflow.json" || relative.startsWith("extensions/")) setOf("workflow") else setOf("workspace")
 }
 
 private class HandoffDialog(
