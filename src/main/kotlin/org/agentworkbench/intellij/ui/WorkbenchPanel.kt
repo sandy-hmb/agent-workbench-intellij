@@ -1616,7 +1616,7 @@ internal fun classifyWorkItemChange(kit: String, path: String, selectedSlug: Str
     val prefix = "$kit/.workspace/"
     if (!path.startsWith(prefix)) return emptySet()
     val relative = path.removePrefix(prefix)
-    return if (relative.startsWith("runs/") || relative == "workflow.json" || relative.startsWith("extensions/")) setOf("workflow") else setOf("workspace")
+    return if (relative.startsWith("runs/") || relative == "config/workflow.json" || relative == "config/workflow.draft.json" || relative.startsWith("extensions/")) setOf("workflow") else setOf("workspace")
 }
 
 private class HandoffDialog(

@@ -4,7 +4,7 @@ Agent Workbench 是 IntelliJ IDEA 和 Rebased 中以只读为主的工作流工�
 
 插件主要解决“查看和定位”问题：不用在工作流仓、多个业务仓和 Git 工具之间反复切换。它不提供 Agent 终端，不调用模型，不创建 WorkItem；唯一的状态写操作是用户二次确认后，通过 Kit 既有入口将 已满足验收的 WorkItem 标记为 `done`。
 
-插件 1.0.1 与 Kit 2.0.1 / Inspect 2.1 配套，修复分页、详情刷新和迟到请求问题；旧协议会明确拒绝。
+插件 1.0.1 与 Kit 2.1.0 / Inspect 2.1 配套，修复分页、详情刷新和迟到请求问题；旧协议会明确拒绝。
 
 ## 它和 agent-workbench 的关系
 
@@ -22,7 +22,7 @@ IDEA / Rebased
                └── .workspace 配置登记的业务仓
 ```
 
-插件通过 `inspect --api-major 2 --json` 读取 Kit 的公开只读协议；标记完成时调用 `kit.py item complete <slug> --state-revision <stateRevision>`。业务仓列表来自 `.workspace/workspace.json` 的登记内容，Git 分支、工作区变更、上游领先/落后和冲突来自宿主 Git 或只读 Git 信息。插件不会递归扫描父目录，也不会把未登记兄弟仓加入工作台。
+插件通过 `inspect --api-major 2 --json` 读取 Kit 的公开只读协议；标记完成时调用 `kit.py item complete <slug> --state-revision <stateRevision>`。业务仓列表来自 `.workspace/config/workspace.json` 的登记内容，Git 分支、工作区变更、上游领先/落后和冲突来自宿主 Git 或只读 Git 信息。插件不会递归扫描父目录，也不会把未登记兄弟仓加入工作台。
 
 ## 快速开始
 
@@ -33,7 +33,7 @@ IDEA / Rebased
 ### 前置条件
 
 - IntelliJ IDEA 2025.2（Build 252）或 Rebased 1.1.12（Build 262）及兼容版本。
-- Kit 版本 `2.0.1`，与插件 `1.0.1` 配套使用；仅接受当前 item 格式，不提供旧格式迁移。
+- Kit 版本 `2.1.0`，与插件 `1.0.1` 配套使用；仅接受当前 item 格式，不提供旧格式迁移。
 - 可执行的 Python 3，通常是 `python3`。
 - 当前项目为受信任项目，并已安装宿主自带的 Git 支持。
 
@@ -119,7 +119,7 @@ GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab T
 
 ### 提示“Inspect 信封格式无效”
 
-旧 Kit 缺少当前插件必需的定向投影时会提示版本不兼容。将绑定的工作流仓升级到与插件 `1.0.1` 配套的 Kit `2.0.1`，再点击“绑定并刷新”：
+旧 Kit 缺少当前插件必需的定向投影时会提示版本不兼容。将绑定的工作流仓升级到与插件 `1.0.1` 配套的 Kit `2.1.0`，再点击“绑定并刷新”：
 
 ```bash
 cd /path/to/agent-workbench
@@ -135,7 +135,7 @@ python3 scripts/kit.py inspect --root . --api-major 2 --json workspace
 
 ### 工作台没有数据
 
-确认项目已受信任、Kit 根目录包含 `scripts/kit.py` 和 `.workspace/`，Python 路径可执行，并且 Kit 为配套的 `2.0.1`。未初始化的 Kit 只显示维护模式信息，插件不会自动初始化工作区。
+确认项目已受信任、Kit 根目录包含 `scripts/kit.py` 和 `.workspace/`，Python 路径可执行，并且 Kit 为配套的 `2.1.0`。未初始化的 Kit 只显示维护模式信息，插件不会自动初始化工作区。
 
 ### 为什么没有所有父目录项目
 

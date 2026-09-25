@@ -33,8 +33,10 @@ Agent Workbench 是一个专为复杂多仓架构和 AI/大模型工作流设计
 my-app-workspace/                         # 推荐用 IDEA 打开此根目录
 ├── agent-workbench/                      # 工作流管理仓
 │   ├── .workspace/
-│   │   └── workspace.json                # 业务仓与工作区登记表
-│   └── docs/development/items/        # 需求规范与文档
+│   │   └── config/
+│   │       ├── workspace.json            # 业务仓与工作区登记表
+│   │       └── local.json                # 本机设置
+│   └── items/                            # 需求规范与文档
 │       └── order-export-optimization/
 │           ├── requirements/
 │           │   └── requirements.md       # PRD 需求规范
@@ -45,11 +47,11 @@ my-app-workspace/                         # 推荐用 IDEA 打开此根目录
 ```
 
 ### 2.2 `workspace.json` 登记配置示例
-在 `agent-workbench/.workspace/workspace.json` 中登记需要纳入工作台管理的业务代码仓：
+在 `agent-workbench/.workspace/config/workspace.json` 中登记需要纳入工作台管理的业务代码仓：
 
 ```json
 {
-  "version": {"major": 3, "minor": 0},
+  "version": {"major": 4, "minor": 0},
   "workspace": {
     "name": "E-Commerce App Workspace",
     "repositories": [
