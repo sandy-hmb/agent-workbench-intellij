@@ -287,79 +287,19 @@ internal class DocumentTreePanel(
     }
 
     private fun groupDocuments(files: List<JsonObject>, reviews: JsonObject?): List<Pair<String, List<DocItem>>> {
-        val coreItems = mutableListOf<DocItem>()
-        val reqItems = mutableListOf<DocItem>()
-        val designItems = mutableListOf<DocItem>()
-        val planItems = mutableListOf<DocItem>()
-        val verifyItems = mutableListOf<DocItem>()
-        val artifactItems = mutableListOf<DocItem>()
-        val otherItems = mutableListOf<DocItem>()
-
-        val coreMapping = mapOf(
-            "requirements/requirements.md" to ("需求说明" to "requirements"),
-            "requirements.md" to ("需求说明" to "requirements"),
-            "design/design.md" to ("技术设计" to "design"),
-            "design.md" to ("技术设计" to "design"),
-            "plans/implementation.md" to ("实施计划" to "plan"),
-            "plan.md" to ("实施计划" to "plan"),
-            "testing/verification.md" to ("验证记录" to null),
-            "verification.md" to ("验证记录" to null),
-            "README.md" to ("需求索引概览" to null)
-        )
-
-        for (file in files) {
-            val path = file.str("path") ?: continue
-            val fileName = Path.of(path).fileName?.toString() ?: path
-
-            if (coreMapping.containsKey(path)) {
-                val (title, reviewKey) = coreMapping.getValue(path)
-                val badge = reviewKey?.let { reviews?.str(it) }
-                val color = when (badge) {
-                    "已批准", "已通过" -> WorkbenchUi.green
-                    "待审阅", "待核验" -> WorkbenchUi.amber
-                    else -> null
-                }
-                coreItems.add(DocItem(title = title, path = path, filename = fileName, badge = badge, badgeColor = color))
-            } else if (path.startsWith("requirements/")) {
-                val title = if (fileName.startsWith("jira-", ignoreCase = true)) {
-                    "Jira 原始记录 (${fileName.removePrefix("jira-").removeSuffix(".md")})"
-                } else {
-                    fileName.removeSuffix(".md")
-                }
-                reqItems.add(DocItem(title = title, path = path, filename = fileName))
-            } else if (path.startsWith("design/")) {
-                designItems.add(DocItem(title = fileName.removeSuffix(".md"), path = path, filename = fileName))
-            } else if (path.startsWith("plans/")) {
-                planItems.add(DocItem(title = fileName.removeSuffix(".md"), path = path, filename = fileName))
-            } else if (path.startsWith("testing/") || path.startsWith("tests/")) {
-                verifyItems.add(DocItem(title = fileName.removeSuffix(".md"), path = path, filename = fileName))
-            } else if (path.startsWith("artifacts/") || path.startsWith("attachments/")) {
-                artifactItems.add(DocItem(title = fileName, path = path, filename = fileName))
-            } else {
-                otherItems.add(DocItem(title = fileName.removeSuffix(".md"), path = path, filename = fileName))
-            }
+        val titles = mapOf("change" to "变更说明", "requirements" to "需求说明", "design" to "技术设计",
+            "plan" to "实施计划", "verification" to "验证摘要", "readme" to "需求索引")
+        val groups = linkedMapOf("核心文档" to mutableListOf<DocItem>(), "参考资料" to mutableListOf(), "交付产物" to mutableListOf())
+        files.forEach { file ->
+            val path = file.str("path") ?: return@forEach
+            val role = file.str("role") ?: return@forEach
+            val filename = Path.of(path).fileName.toString()
+            val state = reviews?.str(role)
+            val badge = when (state) { "approved" -> "已批准"; "pending", "changed" -> "待审阅"; else -> null }
+            val color = when (state) { "approved" -> WorkbenchUi.green; "pending", "changed" -> WorkbenchUi.amber; else -> null }
+            val group = when (role) { "references" -> "参考资料"; "artifacts" -> "交付产物"; else -> "核心文档" }
+            groups.getValue(group).add(DocItem(title = titles[role] ?: filename, path = path, filename = filename, badge = badge, badgeColor = color))
         }
-
-        val canonicalOrder = listOf(
-            "requirements/requirements.md", "requirements.md",
-            "design/design.md", "design.md",
-            "plans/implementation.md", "plan.md",
-            "testing/verification.md", "verification.md",
-            "README.md"
-        )
-        coreItems.sortBy { item ->
-            val idx = canonicalOrder.indexOf(item.path)
-            if (idx >= 0) idx else 99
-        }
-
-        return listOf(
-            "核心阶段文档" to coreItems,
-            "需求与背景" to reqItems,
-            "技术设计附件" to designItems,
-            "实施计划附件" to planItems,
-            "测试验证附件" to verifyItems,
-            "交付产物与脚本" to artifactItems,
-            "其他文档" to otherItems
-        )
+        return groups.map { it.key to it.value }
     }
 }

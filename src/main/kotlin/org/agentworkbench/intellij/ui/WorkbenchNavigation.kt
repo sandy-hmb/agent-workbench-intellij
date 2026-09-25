@@ -41,25 +41,25 @@ internal object WorkbenchNavigation {
         return openInEditor(project, vf, line, focusEditor)
     }
 
-    fun resolveFeatureDir(project: Project, slug: String): Path? {
+    fun resolveWorkItemDir(project: Project, slug: String): Path? {
         val kitRootStr = WorkbenchService.getInstance(project).snapshot().kitRoot ?: return null
         val rootPath = Path.of(kitRootStr)
-        val candidate = rootPath.resolve("docs/development/features").resolve(slug)
+        val candidate = rootPath.resolve("docs/development/items").resolve(slug)
         if (Files.exists(candidate)) return candidate
-        val fallback = rootPath.resolve(".workspace/docs/features").resolve(slug)
+        val fallback = rootPath.resolve(".workspace/items").resolve(slug)
         if (Files.exists(fallback)) return fallback
         return candidate
     }
 
-    fun openFeatureInEditor(project: Project, slug: String, subPath: String = "README.md", line: Int? = null): Boolean {
-        val dir = resolveFeatureDir(project, slug) ?: return false
+    fun openWorkItemInEditor(project: Project, slug: String, subPath: String = "README.md", line: Int? = null): Boolean {
+        val dir = resolveWorkItemDir(project, slug) ?: return false
         val targetFile = dir.resolve(subPath).normalize()
         val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(targetFile) ?: return false
         return openInEditor(project, vf, line, true)
     }
 
-    fun locateFeatureInProjectView(project: Project, slug: String): Boolean {
-        val dir = resolveFeatureDir(project, slug) ?: return false
+    fun locateWorkItemInProjectView(project: Project, slug: String): Boolean {
+        val dir = resolveWorkItemDir(project, slug) ?: return false
         val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(dir) ?: return false
         ProjectView.getInstance(project).select(null, vf, true)
         return true

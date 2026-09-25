@@ -92,7 +92,7 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
         addActionListener {
             val slug = currentBranchMatchedSlug ?: return@addActionListener
             openInEditor { editor ->
-                editor.panel.selectFeature(slug)
+                editor.panel.selectWorkItem(slug)
             }
         }
     }
@@ -113,7 +113,7 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
         maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(30))
     }
     private val featureModel = DefaultListModel<JsonObject>()
-    private val allFeatures = mutableListOf<JsonObject>()
+    private val allWorkItems = mutableListOf<JsonObject>()
     private val featureList = JBList(featureModel).apply {
         background = JBColor(0xFAFAFA, 0x2B2D30)
         selectionBackground = JBColor(0xE0E7FF, 0x2E436E)
@@ -324,14 +324,14 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
         featureList.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) {
-                    openSelectedFeature()
+                    openSelectedWorkItem()
                 }
             }
         })
         featureList.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
                 if (e.keyCode == KeyEvent.VK_ENTER) {
-                    openSelectedFeature()
+                    openSelectedWorkItem()
                 }
             }
         })
@@ -346,7 +346,7 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
                     val slug = item?.str("slug") ?: return
                     val menu = JPopupMenu().apply {
                         add(JMenuItem("在工作台中打开", AllIcons.Actions.OpenNewTab).apply {
-                            addActionListener { openSelectedFeature() }
+                            addActionListener { openSelectedWorkItem() }
                         })
                         add(JMenuItem("复制 Slug: $slug").apply {
                             addActionListener {
@@ -355,7 +355,7 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
                         })
                         add(JMenuItem("在系统文件管理器中显示", AllIcons.Actions.MenuOpen).apply {
                             addActionListener {
-                                val dir = WorkbenchNavigation.resolveFeatureDir(project, slug)
+                                val dir = WorkbenchNavigation.resolveWorkItemDir(project, slug)
                                 if (dir != null && dir.toFile().exists()) RevealFileAction.openFile(dir)
                             }
                         })
@@ -367,7 +367,7 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
 
         searchField.addDocumentListener(object : DocumentAdapter() {
             override fun textChanged(e: DocumentEvent) {
-                filterFeatures(searchField.text)
+                filterWorkItems(searchField.text)
             }
         })
 
@@ -485,7 +485,7 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
         val matched = service.currentBranchSlug()
         currentBranchMatchedSlug = matched
         if (matched != null) {
-            val f = state.features.firstOrNull { it.str("slug") == matched }
+            val f = state.items.firstOrNull { it.str("slug") == matched }
             val name = f?.str("title") ?: matched
             branchBannerLabel.text = "当前检出分支属于需求：$name"
             branchBanner.isVisible = true
@@ -493,19 +493,19 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
             branchBanner.isVisible = false
         }
 
-        allFeatures.clear()
-        allFeatures.addAll(state.features)
-        filterFeatures(searchField.text)
+        allWorkItems.clear()
+        allWorkItems.addAll(state.items)
+        filterWorkItems(searchField.text)
 
         repoModel.clear()
         val repos = state.workspace?.data.obj()?.objects("repositories").orEmpty()
         repos.forEach { repoModel.addElement(it) }
     }
 
-    private fun filterFeatures(query: String) {
+    private fun filterWorkItems(query: String) {
         val q = query.trim().lowercase()
         featureModel.clear()
-        for (f in allFeatures) {
+        for (f in allWorkItems) {
             val title = f.str("title").orEmpty().lowercase()
             val slug = f.str("slug").orEmpty().lowercase()
             if (q.isEmpty() || title.contains(q) || slug.contains(q)) {
@@ -514,10 +514,10 @@ internal class WorkbenchToolWindowPanel(private val project: Project) : JPanel(C
         }
     }
 
-    private fun openSelectedFeature() {
+    private fun openSelectedWorkItem() {
         val slug = featureList.selectedValue?.str("slug") ?: return
         openInEditor { editor ->
-            editor.panel.selectFeature(slug)
+            editor.panel.selectWorkItem(slug)
         }
     }
 

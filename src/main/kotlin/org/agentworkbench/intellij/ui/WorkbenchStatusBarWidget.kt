@@ -59,36 +59,27 @@ internal class WorkbenchStatusBarWidget(private val project: Project) : CustomSt
         UIUtil.invokeLaterIfNeeded {
             if (project.isDisposed) return@invokeLaterIfNeeded
             val snapshot = WorkbenchService.getInstance(project).snapshot()
-            val featureSlug = snapshot.selectedDetail
-            val plan = snapshot.detail?.data?.asJsonObject?.getAsJsonObject("summary")?.getAsJsonObject("planSummary")
+            val itemSlug = snapshot.selectedDetail
+            val plan = snapshot.detail?.data?.asJsonObject?.getAsJsonObject("summary")?.getAsJsonObject("progress")
             val text = when {
-                featureSlug != null && plan != null -> {
+                itemSlug != null && plan != null -> {
                     val comp = plan.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
                     val total = plan.get("total")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
-                    val trustedObj = plan.getAsJsonObject("trustedProgress")
-                    val isApplicable = trustedObj?.get("applicable")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
-                    val trustedDone = if (isApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: comp else comp
-                    val untrusted = if (isApplicable && comp > trustedDone) comp - trustedDone else 0
-                    val progressPart = if (untrusted > 0) "$comp/$total ⚠$untrusted" else "$comp/$total"
-                    "$featureSlug ($progressPart)"
+                    val progressPart = "$comp/$total"
+                    "$itemSlug ($progressPart)"
                 }
-                featureSlug != null -> featureSlug
+                itemSlug != null -> itemSlug
                 snapshot.kitRoot != null -> "Workbench 活跃"
                 else -> "Workbench"
             }
             label.text = text
             label.toolTipText = when {
-                featureSlug != null && plan != null -> {
+                itemSlug != null && plan != null -> {
                     val comp = plan.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
                     val total = plan.get("total")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
-                    val trustedObj = plan.getAsJsonObject("trustedProgress")
-                    val isApplicable = trustedObj?.get("applicable")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
-                    val trustedDone = if (isApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: comp else comp
-                    val untrusted = if (isApplicable && comp > trustedDone) comp - trustedDone else 0
-                    val untrustedNote = if (untrusted > 0) " (其中 $untrusted 项缺乏有效凭据)" else ""
-                    "Agent Workbench 当前需求：$featureSlug [进度 $comp/$total$untrustedNote] (点击切换或查看)"
+                    "Agent Workbench 当前需求：$itemSlug [进度 $comp/$total] (点击切换或查看)"
                 }
-                featureSlug != null -> "Agent Workbench 当前需求：$featureSlug (点击切换或查看)"
+                itemSlug != null -> "Agent Workbench 当前需求：$itemSlug (点击切换或查看)"
                 snapshot.kitRoot != null -> "Agent Workbench 活跃工作区：${snapshot.kitRoot}"
                 else -> "Agent Workbench：点击打开工作台"
             }

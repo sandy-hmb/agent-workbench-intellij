@@ -1,29 +1,29 @@
-# Feature 详情中的 PR/MR 链接
+# WorkItem 详情中的 PR/MR 链接
 
 状态：已实现，待发布。
 
-用户打开 Feature 详情后，插件根据该 Feature 已记录的工作分支，从 GitHub 或 GitLab 查询对应 PR/MR。每个仓库显示一个评审链接，点击后在浏览器打开。网页手动创建与 Agent 创建的评审采用同一查询方式。
+用户打开 WorkItem 详情后，插件根据该 WorkItem 已记录的工作分支，从 GitHub 或 GitLab 查询对应 PR/MR。每个仓库显示一个评审链接，点击后在浏览器打开。网页手动创建与 Agent 创建的评审采用同一查询方式。
 
-本次只修改 `agent-workbench-intellij`。依据用户明确要求，设计也保存在插件仓；不修改相邻 Kit 仓、Inspect 协议、qbit 扩展或 Feature 文档。
+本次只修改 `agent-workbench-intellij`。依据用户明确要求，设计也保存在插件仓；不修改相邻 Kit 仓、Inspect 协议、qbit 扩展或 WorkItem 文档。
 
 ## 1. 范围与使用流程
 
 首版提供 GitHub.com、GitLab.com 和自建 GitLab 的 Token 查询，覆盖同一远程仓库内的功能分支 PR/MR，包括未合并、已关闭和已合并记录。
 
 1. 在 `Settings | Tools | Agent Workbench` 的“代码托管服务”中填写平台、服务地址和 Token。
-2. 打开一个 Feature 的“概览”。插件只查询该 Feature 关联的仓库。
-3. 打开 Feature 的“变更”，在默认“代码评审”子页查看各仓库的 PR/MR，点击链接在系统浏览器打开。
+2. 打开一个 WorkItem 的“概览”。插件只查询该 WorkItem 关联的仓库。
+3. 打开 WorkItem 的“变更”，在默认“代码评审”子页查看各仓库的 PR/MR，点击链接在系统浏览器打开。
 4. 刚创建 PR、评审状态有变化或查询失败时，点击该区域的“刷新”。
 
-概览、首页、业务仓库列表和 Feature 列表不展示、不查询 PR/MR。首版不创建、审批或合并评审，不接入 Jira、飞书、CLI、OAuth、后台轮询或扩展执行框架。
+概览、首页、业务仓库列表和 WorkItem 列表不展示、不查询 PR/MR。首版不创建、审批或合并评审，不接入 Jira、飞书、CLI、OAuth、后台轮询或扩展执行框架。
 
 ## 2. 界面设计
 
-### Feature 变更页
+### WorkItem 变更页
 
 “变更”包含“代码评审”“需求分支已提交”“当前工作目录”三个子页，默认显示“代码评审”。评审表格每仓一行，列顺序为仓库、PR/MR、状态；右上角提供刷新。标题长时在链接旁省略显示，悬浮显示完整标题与来源分支、目标分支、最后查询时间。原概览保持现有布局，不被评审区域挤压。
 
-“需求分支已提交”保留原有文件、提交、Fetch 和 Diff 能力，但压缩仓库与分支摘要，文件和提交列表占据主体高度；切换 Feature 或仓库时显式加载，不依赖下拉框事件触发。“当前工作目录”继续使用宿主 Git 视图。
+“需求分支已提交”保留原有文件、提交、Fetch 和 Diff 能力，但压缩仓库与分支摘要，文件和提交列表占据主体高度；切换 WorkItem 或仓库时显式加载，不依赖下拉框事件触发。“当前工作目录”继续使用宿主 Git 视图。
 
 以下为界面示例，不代表实际评审记录：
 
@@ -45,7 +45,7 @@
 | 未登记工作分支、本地仓不可用或 remote 无法确定 | 显示具体原因；不根据当前检出分支猜测 |
 | 查询失败 | 显示本仓错误和重试入口；不显示为“未找到” |
 
-多候选选择只影响插件当前查看结果，不形成持久关联。刷新后若所选评审仍在候选中则保留选择；切换 Feature 后重新按当前数据查询。不会按“最新”或“仍开放”直接覆盖其他候选。
+多候选选择只影响插件当前查看结果，不形成持久关联。刷新后若所选评审仍在候选中则保留选择；切换 WorkItem 后重新按当前数据查询。不会按“最新”或“仍开放”直接覆盖其他候选。
 
 ### 设置页
 
@@ -68,7 +68,7 @@
 
 | 数据 | 现有来源 |
 | --- | --- |
-| Feature 标识 | `inspect feature` 的 `summary.slug` |
+| WorkItem 标识 | `inspect feature` 的 `summary.slug` |
 | 仓库与工作分支 | `summary.repositoryBindings[].repository/workBranch` |
 | 基线分支 | `summary.repositoryBindings[].baseBranch` |
 | 本地仓路径 | `inspect workspace` 的仓库登记与 `absolutePath` |
@@ -76,11 +76,11 @@
 
 `baseBranch` 是开发基线，不一定是 PR/MR 目标。首版不以它硬性过滤评审；在多候选弹窗中展示实际目标分支供用户区分。
 
-直接使用 Feature 中的工作分支字符串，不要求当前 checkout 匹配，也不要求该分支仍在本地或远程存在。因此合并后删除分支，只要平台仍保留来源信息，就仍可找到历史评审。
+直接使用 WorkItem 中的工作分支字符串，不要求当前 checkout 匹配，也不要求该分支仍在本地或远程存在。因此合并后删除分支，只要平台仍保留来源信息，就仍可找到历史评审。
 
 ### 确定 remote
 
-按 Feature 工作分支读取 Git 配置，依次使用：`branch.<workBranch>.pushRemote`、`remote.pushDefault`、`branch.<workBranch>.remote`、`origin`、唯一剩余 remote。配置为 `.` 不视为远程平台；显式配置指向不存在的 remote 时提示配置错误，不悄悄选择其他 remote。
+按 WorkItem 工作分支读取 Git 配置，依次使用：`branch.<workBranch>.pushRemote`、`remote.pushDefault`、`branch.<workBranch>.remote`、`origin`、唯一剩余 remote。配置为 `.` 不视为远程平台；显式配置指向不存在的 remote 时提示配置错误，不悄悄选择其他 remote。
 
 选中 remote 后优先使用其 push URL，没有时使用 fetch URL。多个 URL 规范化为同一项目时去重；对应不同项目或存在多个无法唯一选择的 remote 时，提供本次查询的 remote 选择，不遍历访问所有地址。
 
@@ -97,11 +97,11 @@ HTTP(S) URL 中含用户名/密码、非法路径或控制字符时拒绝使用�
 - 缺失核对字段时显示“评审来源信息不足”；不能据此自动绑定，也不能把未知记录当作无结果。
 - 不按标题、Jira Key、作者或当前检出分支匹配。
 
-关联依赖“Feature 工作分支不被其他 Feature 复用”的已有约定。数据出现多候选时按第 2 节处理。跨 fork 评审需要同时确定源项目与目标项目，首版不做跨项目搜索，界面说明当前查询范围。
+关联依赖“WorkItem 工作分支不被其他 WorkItem 复用”的已有约定。数据出现多候选时按第 2 节处理。跨 fork 评审需要同时确定源项目与目标项目，首版不做跨项目搜索，界面说明当前查询范围。
 
 ## 4. 平台 API 与凭据
 
-使用两个平台的官方 REST API，仅发送 GET。API 根地址由平台类型和服务 origin 计算，不由 Feature 文档或 remote 任意指定。
+使用两个平台的官方 REST API，仅发送 GET。API 根地址由平台类型和服务 origin 计算，不由 WorkItem 文档或 remote 任意指定。
 
 | 平台 | API 根地址与查询 |
 | --- | --- |
@@ -120,13 +120,13 @@ Token 仅通过 IntelliJ `PasswordSafe` 保存和读取，普通 `agent-workbenc
 
 ## 5. 请求生命周期与错误处理
 
-只在项目受信任、Feature 概览可见、服务配置完整时开始查询。设置保存只使结果失效，实际重新查询仍遵循可见条件。
+只在项目受信任、WorkItem 概览可见、服务配置完整时开始查询。设置保存只使结果失效，实际重新查询仍遵循可见条件。
 
-当前 Feature 各仓最多两个并发请求，单请求连接超时 5 秒、读取超时 10 秒，单仓含分页总预算 20 秒、单页响应上限 2 MiB。连续点刷新会取消被替代请求；返回列表、切换 Feature/Kit/Python、修改服务配置或关闭项目时取消当前请求，并断开正在使用的连接。阻塞 I/O 不仅依靠 `Job.cancel()`；实现必须验证取消确实释放连接与并发名额。
+当前 WorkItem 各仓最多两个并发请求，单请求连接超时 5 秒、读取超时 10 秒，单仓含分页总预算 20 秒、单页响应上限 2 MiB。连续点刷新会取消被替代请求；返回列表、切换 WorkItem/Kit/Python、修改服务配置或关闭项目时取消当前请求，并断开正在使用的连接。阻塞 I/O 不仅依靠 `Job.cancel()`；实现必须验证取消确实释放连接与并发名额。
 
-只保存当前 Feature 的查询结果、查询时间与本次候选选择。重复渲染、Git 扫描回调和现有定时刷新不重新访问平台；用户点“代码评审”的刷新按钮才强制重查。离开后再次进入概览可重新查询，不建立磁盘缓存或轮询任务。
+只保存当前 WorkItem 的查询结果、查询时间与本次候选选择。重复渲染、Git 扫描回调和现有定时刷新不重新访问平台；用户点“代码评审”的刷新按钮才强制重查。离开后再次进入概览可重新查询，不建立磁盘缓存或轮询任务。
 
-请求身份包含规范 Kit 根目录、Python 绑定、Feature slug、仓路径、remote 项目、工作分支和服务配置代数。结果更新前及 EDT 回调内再次检查身份与请求代数，旧成功和旧失败都不能覆盖新选择。Token 本身不属于请求 key。
+请求身份包含规范 Kit 根目录、Python 绑定、WorkItem slug、仓路径、remote 项目、工作分支和服务配置代数。结果更新前及 EDT 回调内再次检查身份与请求代数，旧成功和旧失败都不能覆盖新选择。Token 本身不属于请求 key。
 
 | 故障 | 用户提示 |
 | --- | --- |
@@ -147,11 +147,11 @@ Token 仅通过 IntelliJ `PasswordSafe` 保存和读取，普通 `agent-workbenc
 | --- | --- |
 | `WorkbenchSettings.kt` | 在现有工作区 Preference 中保存服务配置，兼容旧设置缺少字段 |
 | `ui/WorkbenchConfigurable.kt` | 服务列表、Token 替换/移除与保存反馈 |
-| `git/NativeGit.kt` | 复用现有 Git 执行入口，补充针对 Feature 分支的 remote 查询及日志脱敏 |
+| `git/NativeGit.kt` | 复用现有 Git 执行入口，补充针对 WorkItem 分支的 remote 查询及日志脱敏 |
 | 新增 `review/ReviewClient.kt` | 必要数据类、remote 解析、两个平台查询、分页与唯一匹配判断 |
-| 新增 `review/ReviewService.kt` | PasswordSafe 访问、当前 Feature 结果与请求取消；公开 API 使用宿主支持的稳定版本 |
-| 新增 `ui/FeatureReviewPanel.kt` | 每仓一行、设置/刷新/候选入口，复用现有 UI 令牌 |
-| `ui/WorkbenchPanel.kt`、`ui/FeatureChangesPanel.kt` | 变更页接入，传入现有 bindings；压缩已提交页并显式加载 |
+| 新增 `review/ReviewService.kt` | PasswordSafe 访问、当前 WorkItem 结果与请求取消；公开 API 使用宿主支持的稳定版本 |
+| 新增 `ui/WorkItemReviewPanel.kt` | 每仓一行、设置/刷新/候选入口，复用现有 UI 令牌 |
+| `ui/WorkbenchPanel.kt`、`ui/WorkItemChangesPanel.kt` | 变更页接入，传入现有 bindings；压缩已提交页并显式加载 |
 | `README.md`、`docs/USER_GUIDE.md` | 配置方法、权限、查询范围与常见错误 |
 
 不改变 `KitClient` 的 Inspect 操作，不新增 Schema 或工作区配置版本。优先直接使用小函数和数据类，不设计可插拔平台注册系统。
@@ -163,9 +163,9 @@ Token 仅通过 IntelliJ `PasswordSafe` 保存和读取，普通 `agent-workbenc
 | 场景 | 通过条件 |
 | --- | --- |
 | 网页手动创建 PR/MR | 无需写 README，按同仓与工作分支找到链接 |
-| 当前 checkout 不同或来源分支已删除 | 使用 Feature 记录查询；平台保留来源信息时可找到历史评审 |
+| 当前 checkout 不同或来源分支已删除 | 使用 WorkItem 记录查询；平台保留来源信息时可找到历史评审 |
 | 同名来源分支来自其他 fork、多个目标或历史重建 | 不误绑定；多候选需选择；fork 范围限制明确 |
-| 多仓 Feature | 每仓一行；一个仓失败不遮蔽其他仓结果 |
+| 多仓 WorkItem | 每仓一行；一个仓失败不遮蔽其他仓结果 |
 | 首页、列表、不可见页面、未受信任项目 | PR/MR API 请求数为零 |
 | HTTPS/SSH、SSH 别名、GitLab 多级 group、非默认端口 | 正确解析；不能唯一选择 remote 时明确提示 |
 | qbit/crm 使用同一域名不同 Token | 凭据与结果互不混用；设置 XML 不含 Token |
@@ -173,7 +173,7 @@ Token 仅通过 IntelliJ `PasswordSafe` 保存和读取，普通 `agent-workbenc
 | 两个平台的所有状态、分页、缺失字段、限流和失败 | 状态准确；不完整与无结果有区别，不只读第一页就判断唯一 |
 | 快速切换、反复刷新、修改 Token、同根切换 Python | 旧成功/失败均不能覆盖当前状态；取消释放资源 |
 | 重定向、外部分页 URL、含凭据 remote、恶意标题 | 不向其他 origin 发送 Token，日志脱敏，文本不会执行 |
-| 工作区只读 | 测试前后 Kit、Feature 文档、Git 内容和配置无变化；仅允许插件设置与凭据库变更 |
+| 工作区只读 | 测试前后 Kit、WorkItem 文档、Git 内容和配置无变化；仅允许插件设置与凭据库变更 |
 
 新增测试使用合成 Git 仓、平台响应和可控 HTTP/凭据替身，复用现有测试依赖，不读取真实 Token，不访问真实 GitHub/GitLab。测试覆盖实际查询流程、UI 回调和设置序列化，不以关键词断言替代行为。
 

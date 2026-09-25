@@ -18,8 +18,8 @@
 
 ### 1.1 定位：“查看、理解与定位”
 Agent Workbench 是一个专为复杂多仓架构和 AI/大模型工作流设计的**读取优先研发工作台**：
-* **数据事实单一来源**：所有的 Feature、任务分解、验证记录均保存在工作流仓 `agent-workbench` 的 `.workspace` 和 Markdown 规范文件中；
-* **非侵入式消费**：插件通过子进程协议 `kit.py inspect` 读取数据；只有用户在 `testing` Feature 详情中二次确认“标记完成”时，才调用 Kit 既有命令将状态更新为 `done`；
+* **数据事实单一来源**：所有的 WorkItem、任务分解、验证记录均保存在工作流仓 `agent-workbench` 的 `.workspace` 和 Markdown 规范文件中；
+* **非侵入式消费**：插件通过子进程协议 `kit.py inspect` 读取数据；只有用户在 已满足验收的 WorkItem 详情中二次确认“标记完成”时，才调用 Kit 既有命令将状态更新为 `done`；
 * **宿主原生 Git 代理**：所有 Git 的写操作（分支切换、Commit、Push、Merge、冲突解决）均无缝转交 IntelliJ IDEA 原生能力，不自行实现脆弱的 Git 命令包装。
 
 ---
@@ -34,7 +34,7 @@ my-app-workspace/                         # 推荐用 IDEA 打开此根目录
 ├── agent-workbench/                      # 工作流管理仓
 │   ├── .workspace/
 │   │   └── workspace.json                # 业务仓与工作区登记表
-│   └── docs/development/features/        # 需求规范与文档
+│   └── docs/development/items/        # 需求规范与文档
 │       └── order-export-optimization/
 │           ├── requirements/
 │           │   └── requirements.md       # PRD 需求规范
@@ -49,7 +49,7 @@ my-app-workspace/                         # 推荐用 IDEA 打开此根目录
 
 ```json
 {
-  "version": 1,
+  "version": {"major": 3, "minor": 0},
   "workspace": {
     "name": "E-Commerce App Workspace",
     "repositories": [
@@ -92,28 +92,28 @@ my-app-workspace/                         # 推荐用 IDEA 打开此根目录
   * `体检`：即时查看环境 Doctor 诊断结果；
   * `配置`：调整 Kit 绑定路径与 Python 环境。
 * **智能分支匹配横幅**：
-  * 当你本地的某个业务仓正切在某个 Feature 的工作分支时，面板顶部会自动浮现：  
+  * 当你本地的某个业务仓正切在某个 WorkItem 的工作分支时，面板顶部会自动浮现：
     `💡 当前检出分支属于需求: order-export-optimization`，点击即可一秒直达该需求。
 * **需求卡片列表**：
   * 默认只展示未完成需求，可切换到全部或指定生命周期状态；
-  * 卡片直观展示需求 Slug（加粗）、中文标题、状态胶囊徽章（`testing` / `development`）；
+  * 卡片直观展示需求 Slug（加粗）、中文标题、状态胶囊徽章（`active` / `paused` / `done`）；
   * 若当前本地正好切在该需求分支，会高亮显示 `[📍 当前检出]` 专属蓝色胶囊。
-* **标记完成**：`testing` Feature 的计划项与可信凭据全部完成后，可在详情页二次确认并更新为 `done`。
+* **标记完成**：已满足验收的 WorkItem 的计划项与可信凭据全部完成后，可在详情页二次确认并更新为 `done`。
 
 ### 3.2 计划、变更、流程
 
 首次进入需求默认展示「计划」，展示任务、依赖和验证状态；「变更」默认进入已提交比较，「流程」分别显示交付 commit／PR、验证、部署和外部验收，未知不推断为通过。切换需求恢复各自的页面、筛选及位置；切页不修改 Agent 的当前任务或 Git 分支。原始文档通过「查看文档 (F4)」在编辑器中阅读。
 
-### 3.2.1 Feature 代码评审
+### 3.2.1 WorkItem 代码评审
 
 在 `Settings | Tools | Agent Workbench` 的“代码托管服务”添加 GitHub 或 GitLab 服务，再为每个服务保存只读 Token。Token 由 IDEA/Rebased 的密码库管理，`agent-workbench.xml` 不保存 Token。GitHub 建议使用只覆盖目标仓并授予 `Pull requests: Read` 的细粒度 Token；GitLab 使用具备 `read_api` 的 Token。
 
-打开 Feature 的“变更”后，可切换到“代码评审”子页，只查询该 Feature 已登记的仓库与工作分支。它不依赖当前检出分支，因此网页手动创建、已合并或已关闭的同仓 PR/MR 都可以显示。一个分支有多个候选评审时，插件要求选择，不自动猜测；没有评审、Token 权限不足和网络失败会显示为不同状态。需要使用 SSH 主机别名时，可在对应服务中配置，例如 `github-personal`。“需求分支已提交”和“当前工作目录”仍可从相邻子页按需查看。
+打开 WorkItem 的“变更”后，可切换到“代码评审”子页，只查询该 WorkItem 已登记的仓库与工作分支。它不依赖当前检出分支，因此网页手动创建、已合并或已关闭的同仓 PR/MR 都可以显示。一个分支有多个候选评审时，插件要求选择，不自动猜测；没有评审、Token 权限不足和网络失败会显示为不同状态。需要使用 SSH 主机别名时，可在对应服务中配置，例如 `github-personal`。“需求分支已提交”和“当前工作目录”仍可从相邻子页按需查看。
 
 ### 3.3 代码变更与比对（跨仓差异视窗）
 在顶部子标签栏切换至 **「代码变更与比对」**：
 * **多仓摘要**：先查看各仓实际比较范围、文件数、读取错误和工作目录变化；读取失败不显示成零变更。
-* **关联仓库切换**：支持下拉选择需求绑定的不同仓，按 Feature 恢复仓库和文件位置；
+* **关联仓库切换**：支持下拉选择需求绑定的不同仓，按 WorkItem 恢复仓库和文件位置；
 * **接手起点**：仅使用记录或用户明确输入的 commit；比较失败不会退回当前工作目录 Diff；
 * **一键抓取基线 (Fetch)**：点击 `[🔄 抓取远程 (Fetch)]` 即可异步同步远程代码并自动重新计算提交差异；
 * **双分支比对入口**：点击 `[⇥ 打开已提交 Diff]`，直接呼出 IntelliJ 原生双分支比对全屏对话框；
@@ -128,22 +128,22 @@ my-app-workspace/                         # 推荐用 IDEA 打开此根目录
 
 ### 3.5 接手包与历史检索
 
-- Feature 详情的“复制接手提示词”会在 Kit 支持时先打开接手包预览，显示当前任务、阶段、最近验证、来源和估算 token；可复制全文或从来源列表跳转原文。旧 Kit 自动使用原有 brief。
+- WorkItem 详情的“复制接手提示词”会在 Kit 支持时先打开接手包预览，显示当前任务、阶段、最近验证、来源和估算 token；可复制全文或从来源列表跳转原文。旧 Kit 自动使用原有 brief。
 - 左侧“历史检索”按关键词搜索当前工作区的需求、设计、计划和验证记录，并可按仓库、生命周期筛选。双击结果打开原文，右键可复制带位置的片段。
-- 两项能力都只读取现有记录，不修改 Feature、Git 或验证状态。
+- 两项能力都只读取现有记录，不修改 WorkItem、Git 或验证状态。
 
 ## 四、Git 变更比对与心智模型
 
 ### 4.1 非检出比对原理（Non-checkout Diff）
-传统开发中，想要对比功能分支和基线分支的代码，必须先暂存本地文件并 `git checkout` 切换分支。  
+传统开发中，想要对比功能分支和基线分支的代码，必须先暂存本地文件并 `git checkout` 切换分支。
 **Agent Workbench 彻底打破了这一限制：**
 1. 插件利用 Git 底层对象数据库（Git Object Blob），直接提取基线 commit 与需求 commit 进行对比；
 2. **无论你本地当前检出的是什么分支**（哪怕是 `test`、`bugfix` 或者包含未提交代码），双击打开的文件对比**永远是纯净的「基线版本 ➔ 需求分支」**。
 
 ### 4.2 为什么比对树节点后会显示当前分支名（如 `test`）？
-当你点击 `[打开已提交 Diff]` 呼出比对对话框时，左侧树状结构的仓库根节点后可能会附带一个灰色的分支名（例如 `test`）。  
+当你点击 `[打开已提交 Diff]` 呼出比对对话框时，左侧树状结构的仓库根节点后可能会附带一个灰色的分支名（例如 `test`）。
 * **原因**：这是 IntelliJ IDEA 原生 VCS 树状组件的固定环境变量标签，其作用是提醒开发者“你本地硬盘当前物理停留在哪个分支”；
-* **请放心**：它**绝不是**比对的目标！请观察比对标签页的最顶层标题，标明的一定是：  
+* **请放心**：它**绝不是**比对的目标！请观察比对标签页的最顶层标题，标明的一定是：
   `Changes Between develop and feat/order-export`，证明实际参与比对的正是你的基线与需求分支。
 
 ### 4.3 基线分支的远程优先机制
@@ -160,7 +160,7 @@ my-app-workspace/                         # 推荐用 IDEA 打开此根目录
 
 ```text
 1. 启动 IDEA 打开父目录
-   └── 插件自动连接工作区，在左侧 Feature 列表选择今日开发任务
+   └── 插件自动连接工作区，在左侧 WorkItem 列表选择今日开发任务
 2. 阅读需求规范
    └── 在「总览与说明」中同时对照左侧 PRD 与右上任务拆解
 3. 编码与本地提交
@@ -182,11 +182,11 @@ my-app-workspace/                         # 推荐用 IDEA 打开此根目录
 * **处理方法**：在对应仓库中创建或切换到匹配的分支即可，插件将在 500ms 内自动识别并变更为就绪状态。
 
 ### Q2: 需求概述（PRD）内容区域显示空白？
-* **排查路径**：检查工作流仓中对应 Feature 的规范文件存放路径。
+* **排查路径**：检查工作流仓中对应 WorkItem 的规范文件存放路径。
 * **文件命名规范**：插件会按顺序自动检索：
-  1. `docs/development/features/<slug>/requirements/requirements.md`
-  2. `docs/development/features/<slug>/requirements.md`
-  3. `docs/development/features/<slug>/README.md`
+  1. `docs/development/items/<slug>/requirements/requirements.md`
+  2. `docs/development/items/<slug>/requirements.md`
+  3. `docs/development/items/<slug>/README.md`
   若文件名拼写不符，重命名为上述标准命名即可自动加载。
 
 ### Q3: 切换关联仓库下拉菜单时，会不会又跳回第一个？

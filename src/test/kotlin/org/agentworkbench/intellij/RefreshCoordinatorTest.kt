@@ -19,12 +19,12 @@ class RefreshCoordinatorTest {
 
     @Test fun dropsLateResultsAndKeepsSuccessfulSnapshotOnFailure() {
         val coordinator = RefreshCoordinator<String>()
-        val first = coordinator.begin("feature:a")
-        assertTrue(coordinator.succeed("feature:a", first, "first", Instant.EPOCH))
-        val second = coordinator.begin("feature:a")
-        assertFalse(coordinator.succeed("feature:a", first, "late", Instant.now()))
-        assertTrue(coordinator.fail("feature:a", second, "temporary failure"))
-        val resource = coordinator.current("feature:a")!!
+        val first = coordinator.begin("item:a")
+        assertTrue(coordinator.succeed("item:a", first, "first", Instant.EPOCH))
+        val second = coordinator.begin("item:a")
+        assertFalse(coordinator.succeed("item:a", first, "late", Instant.now()))
+        assertTrue(coordinator.fail("item:a", second, "temporary failure"))
+        val resource = coordinator.current("item:a")!!
         assertEquals("first", resource.value)
         assertEquals(Instant.EPOCH, resource.observedAt)
         assertEquals("temporary failure", resource.error)

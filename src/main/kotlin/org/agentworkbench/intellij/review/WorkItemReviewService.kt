@@ -19,9 +19,9 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
-/** 当前 Feature 的临时评审查询状态；结果不写入 Kit、Git 或磁盘。 */
+/** 当前 WorkItem 的临时评审查询状态；结果不写入 Kit、Git 或磁盘。 */
 @Service(Service.Level.PROJECT)
-internal class FeatureReviewService(private val project: Project) : Disposable {
+internal class WorkItemReviewService(private val project: Project) : Disposable {
     private data class Request(
         val kitRoot: String,
         val slug: String,
@@ -78,7 +78,7 @@ internal class FeatureReviewService(private val project: Project) : Disposable {
         cancel()
         val generation = sequence.incrementAndGet()
         val initial = request.bindings.map { binding ->
-            if (binding.workBranch.isNullOrBlank()) ReviewRow.Error(binding.repository, "Feature 未记录工作分支") else ReviewRow.Loading(binding.repository)
+            if (binding.workBranch.isNullOrBlank()) ReviewRow.Error(binding.repository, "WorkItem 未记录工作分支") else ReviewRow.Loading(binding.repository)
         }
         rows = initial
         deliver(initial)
@@ -113,7 +113,7 @@ internal class FeatureReviewService(private val project: Project) : Disposable {
 
     private fun lookup(request: Request, binding: ReviewBinding): ReviewRow {
         val root = binding.root ?: return ReviewRow.Error(binding.repository, "本地仓库不可用")
-        val branch = binding.workBranch ?: return ReviewRow.Error(binding.repository, "Feature 未记录工作分支")
+        val branch = binding.workBranch ?: return ReviewRow.Error(binding.repository, "WorkItem 未记录工作分支")
         val remote = NativeGit.forProject(project).reviewRemote(root.toFile(), branch, remoteChoices[choiceKey(request, binding.repository)])
         val resolved = remote as? NativeGit.ReviewRemote.Resolved ?: return when (remote) {
             is NativeGit.ReviewRemote.Choice -> ReviewRow.RemoteChoice(binding.repository, remote.names)
@@ -170,7 +170,7 @@ internal class FeatureReviewService(private val project: Project) : Disposable {
 
     companion object {
         private const val QUERY_TIMEOUT_SECONDS = 25L
-        fun getInstance(project: Project): FeatureReviewService = project.getService(FeatureReviewService::class.java)
+        fun getInstance(project: Project): WorkItemReviewService = project.getService(WorkItemReviewService::class.java)
     }
 }
 
@@ -185,6 +185,6 @@ internal fun runReviewLookup(repository: String, lookup: () -> ReviewRow): Pair<
     Thread.currentThread().interrupt()
     throw interrupted
 } catch (failure: Exception) {
-    Logger.getInstance(FeatureReviewService::class.java).warn("代码评审查询失败：$repository", failure)
+    Logger.getInstance(WorkItemReviewService::class.java).warn("代码评审查询失败：$repository", failure)
     repository to ReviewRow.Error(repository, "评审查询失败，请重试")
 }

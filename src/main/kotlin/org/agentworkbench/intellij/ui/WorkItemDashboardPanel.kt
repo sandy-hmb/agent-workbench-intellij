@@ -23,14 +23,14 @@ import javax.swing.event.HyperlinkEvent
  * - 可折叠收起：任务拆解与关联代码仓库默认收起，点击一键平滑展开
  * - 高密度紧凑：每个子任务单行排版，杜绝纵向拉伸与无用空白
  */
-internal class FeatureDashboardPanel(
+internal class WorkItemDashboardPanel(
     private val project: Project,
     private val onOpenTask: (JsonObject) -> Unit,
     private val onOpenDoc: (String) -> Unit
 ) : JPanel(BorderLayout()), Disposable {
 
     private var currentSlug: String = ""
-    private var currentReqPath: String = "requirements/requirements.md"
+    private var currentReqPath: String = "change.md"
     private var currentReqContent: String = ""
 
     private val reqDocTitle = JLabel("requirements.md").apply {
@@ -366,7 +366,7 @@ internal class FeatureDashboardPanel(
         currentSlug = summary?.str("slug") ?: ""
         val previousReqPath = currentReqPath
         val previousReqContent = currentReqContent
-        currentReqPath = requirementsPath ?: "requirements/requirements.md"
+        currentReqPath = requirementsPath ?: "change.md"
         reqDocTitle.text = currentReqPath
         scopeLbl.text = "需求范围"
 
@@ -388,25 +388,14 @@ internal class FeatureDashboardPanel(
         val completedCount = tasks.count { it.get("completed")?.asBoolean == true }
         val pct = if (totalCount > 0) (completedCount * 100 / totalCount) else 0
 
-        val planSummary = summary?.get("planSummary").obj()
-        val trustedObj = planSummary?.get("trustedProgress").obj()
-        val isTrustedApplicable = trustedObj?.get("applicable")?.asBoolean == true
-        val trustedDone = if (isTrustedApplicable) trustedObj?.get("completed")?.takeIf { it.isJsonPrimitive }?.asInt ?: completedCount else null
-        val untrustedCount = if (isTrustedApplicable && trustedDone != null && completedCount > trustedDone) completedCount - trustedDone else 0
-
         taskProgressBar.value = pct
         taskProgressBar.isVisible = totalCount > 0
-        taskProgressLabel.text = U.planProgress(completedCount, totalCount, percentage = true, trustedCompleted = if (isTrustedApplicable) trustedDone else null)
-        if (untrustedCount > 0) {
-            taskProgressLabel.toolTipText = "已标记完成 $completedCount 项，但其中 $untrustedCount 项缺乏有效凭据记录或未通过验证 (Untrusted)"
-            taskProgressLabel.foreground = JBColor(0xD97706, 0xF59E0B)
-        } else {
-            taskProgressLabel.toolTipText = null
-            taskProgressLabel.foreground = U.muted
-        }
+        taskProgressLabel.text = U.planProgress(completedCount, totalCount, percentage = true)
+        taskProgressLabel.toolTipText = "完成状态由 Kit 的验证记录确定"
+        taskProgressLabel.foreground = U.muted
 
         val tasksFingerprint = tasks.joinToString(";") {
-            "${it.str("id")}:${it.get("completed")?.asBoolean}:${it.get("trusted")?.takeIf { p -> p.isJsonPrimitive }?.asBoolean}:${it.str("title")}"
+            "${it.str("id")}:${it.get("completed")?.asBoolean}:${it.str("title")}"
         }
         if (tasksFingerprint != lastTasksFingerprint || tasksContainer.componentCount == 0) {
             lastTasksFingerprint = tasksFingerprint
@@ -566,19 +555,14 @@ internal class FeatureDashboardPanel(
         maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
         preferredSize = Dimension(JBUI.scale(200), JBUI.scale(28))
 
-        val trusted = task.get("trusted")?.takeIf { it.isJsonPrimitive }?.runCatching { asBoolean }?.getOrNull()
         val validationKind = task.str("validationKind")
         val deliverables = task.objects("deliverables")
 
         val checkIcon = when {
-            isDone && trusted == true -> AllIcons.General.InspectionsOK
-            isDone && trusted == false -> AllIcons.General.Warning
             isDone -> AllIcons.General.InspectionsOK
             else -> AllIcons.General.TodoDefault
         }
         val checkTooltip = when {
-            isDone && trusted == true -> "已完成并具备有效验证凭据"
-            isDone && trusted == false -> "已标记完成，但缺乏有效执行凭据或退出码异常 (Untrusted)"
             isDone -> "已完成"
             else -> "待完成"
         }
@@ -586,7 +570,6 @@ internal class FeatureDashboardPanel(
 
         val idLbl = JLabel("[$id]").apply {
             font = Font(Font.MONOSPACED, Font.BOLD, JBUI.scale(10))
-            foreground = if (isDone && trusted == false) JBColor(0xD97706, 0xF59E0B) else if (isDone) JBColor(0x059669, 0x34D399) else if (isActive) JBColor(0x2563EB, 0x60A5FA) else U.muted
         }
 
         val delivTip = deliverables.joinToString("<br/>") { d -> "• " + (d.str("path") ?: d.str("symbol") ?: "") }
@@ -597,8 +580,6 @@ internal class FeatureDashboardPanel(
                 append("<html><b>[").append(id).append("] ").append(taskTitle).append("</b>")
                 append("<br/>状态: ")
                 when {
-                    isDone && trusted == true -> append("<font color='#10B981'>已完成 (凭据有效)</font>")
-                    isDone && trusted == false -> append("<font color='#F59E0B'>已打勾但缺乏凭据 (Untrusted)</font>")
                     isDone -> append("已完成")
                     else -> append("待完成")
                 }

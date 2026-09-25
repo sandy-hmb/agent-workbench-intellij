@@ -28,15 +28,15 @@ class GitComparisonTest {
         git(root, "commit", "-m", "base")
         git(root, "branch", "feat/read-only")
         git(root, "switch", "feat/read-only")
-        root.resolve("feature.txt").writeText("feature")
+        root.resolve("item.txt").writeText("item")
         git(root, "add", ".")
-        git(root, "commit", "-m", "feature")
+        git(root, "commit", "-m", "item")
         git(root, "switch", "main")
 
         val result = NativeGit().comparison(root, "main", "feat/read-only") as NativeGit.Comparison.Available
 
         assertEquals("main", git(root, "branch", "--show-current").trim())
-        assertEquals(listOf("feature.txt"), result.files)
+        assertEquals(listOf("item.txt"), result.files)
         assertEquals(1, result.commits.size)
     }
 
@@ -48,7 +48,7 @@ class GitComparisonTest {
         git(root, "add", ".")
         git(root, "commit", "-m", "base")
 
-        val result = NativeGit().comparison(root, "main", "feature/missing")
+        val result = NativeGit().comparison(root, "main", "item/missing")
 
         assertTrue(result is NativeGit.Comparison.Unavailable)
     }
@@ -62,11 +62,11 @@ class GitComparisonTest {
             git(root, "commit", "-m", "base")
             git(root, "remote", "add", "origin", root.path)
             git(root, "fetch", "origin", "main")
-            git(root, "switch", "-c", "feature")
+            git(root, "switch", "-c", "item")
             root.resolve("local.txt").writeText("local")
             git(root, "add", ".")
             git(root, "commit", "-m", "local")
-            assertEquals(listOf("local.txt"), (NativeGit().comparison(root, "main", "feature") as NativeGit.Comparison.Available).files)
+            assertEquals(listOf("local.txt"), (NativeGit().comparison(root, "main", "item") as NativeGit.Comparison.Available).files)
             assertTrue(NativeGit().comparison(root, "main", "missing") is NativeGit.Comparison.Unavailable)
         } finally { root.deleteRecursively() }
     }
@@ -80,9 +80,9 @@ class GitComparisonTest {
         git(root, "commit", "-m", "base")
         git(root, "remote", "add", "origin", "git@github.com:acme/service.git")
         git(root, "remote", "add", "personal", "git@github-personal:acme/service.git")
-        git(root, "config", "branch.feature/review.pushRemote", "personal")
+        git(root, "config", "branch.item/review.pushRemote", "personal")
 
-        val result = NativeGit().reviewRemote(root, "feature/review") as NativeGit.ReviewRemote.Resolved
+        val result = NativeGit().reviewRemote(root, "item/review") as NativeGit.ReviewRemote.Resolved
 
         assertEquals("personal", result.name)
         assertEquals("git@github-personal:acme/service.git", result.url)
@@ -96,13 +96,13 @@ class GitComparisonTest {
         root.resolve("main.txt").writeText("main")
         git(root, "add", ".")
         git(root, "commit", "-m", "main")
-        git(root, "checkout", "--orphan", "feature/orphan")
+        git(root, "checkout", "--orphan", "item/orphan")
         git(root, "rm", "-rf", ".")
         root.resolve("orphan.txt").writeText("orphan")
         git(root, "add", ".")
         git(root, "commit", "-m", "orphan")
 
-        val result = NativeGit().comparison(root, "main", "feature/orphan")
+        val result = NativeGit().comparison(root, "main", "item/orphan")
 
         assertTrue(result is NativeGit.Comparison.Unavailable)
     }
@@ -115,14 +115,14 @@ class GitComparisonTest {
             git(root, "add", ".")
             git(root, "commit", "-m", "base")
             val start = git(root, "rev-parse", "HEAD").trim()
-            git(root, "switch", "-c", "feature")
+            git(root, "switch", "-c", "item")
             root.resolve("after.txt").writeText("after")
             git(root, "add", ".")
             git(root, "commit", "-m", "after")
-            val result = NativeGit().comparison(root, "main", "feature", start) as NativeGit.Comparison.Available
+            val result = NativeGit().comparison(root, "main", "item", start) as NativeGit.Comparison.Available
             assertEquals(start, result.base)
             assertEquals(listOf("after.txt"), result.files)
-            assertTrue(NativeGit().comparison(root, "main", "feature", "not-a-commit") is NativeGit.Comparison.Unavailable)
+            assertTrue(NativeGit().comparison(root, "main", "item", "not-a-commit") is NativeGit.Comparison.Unavailable)
         } finally { root.deleteRecursively() }
     }
 

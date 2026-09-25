@@ -69,10 +69,10 @@ internal class WorkbenchService(private val project: Project) : Disposable {
     fun currentBranchSlug(): String? = currentBranchSlug
 
     private fun updateBranchSlug() {
-        val features = snapshot.features
+        val items = snapshot.items
         val gitMgr = runCatching { GitRepositoryManager.getInstance(project) }.getOrNull() ?: return
         val repos = gitMgr.repositories
-        if (repos.isEmpty() || features.isEmpty()) {
+        if (repos.isEmpty() || items.isEmpty()) {
             if (currentBranchSlug != null) {
                 currentBranchSlug = null
                 ApplicationManager.getApplication().invokeLater {
@@ -95,7 +95,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
                 id to path
             }?.toMap().orEmpty()
 
-        val matched = matchBranchSlug(features, repoPathById, repoBranches)
+        val matched = matchBranchSlug(items, repoPathById, repoBranches)
 
         if (matched != currentBranchSlug) {
             currentBranchSlug = matched
@@ -132,10 +132,10 @@ internal class WorkbenchService(private val project: Project) : Disposable {
                 val response = client.inspect("workspace").getOrThrow()
                 ({ state: Snapshot, value: InspectResponse -> state.copy(workspace = value, error = null) }) to response
             }
-            request("features:$root", callback) { client ->
-                val response = loadPages(client, "features")
-                val features = response.data!!.asJsonObject.getAsJsonArray("items").map { it.asJsonObject }
-                ({ state: Snapshot, _: InspectResponse -> state.copy(features = features, error = null) }) to response
+            request("items:$root", callback) { client ->
+                val response = loadPages(client, "items")
+                val items = response.data!!.asJsonObject.getAsJsonArray("items").map { it.asJsonObject }
+                ({ state: Snapshot, _: InspectResponse -> state.copy(items = items, error = null) }) to response
             }
         }
     }
@@ -146,7 +146,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         ApplicationManager.getApplication().invokeLater { if (!disposed) callback(state) }
     }
 
-    fun loadFeature(slug: String, callback: (Snapshot) -> Unit) = loadProjection(slug, "task", callback)
+    fun loadWorkItem(slug: String, callback: (Snapshot) -> Unit) = loadProjection(slug, "task", callback)
 
     fun loadProjection(slug: String, view: String, callback: (Snapshot) -> Unit) {
         require(view in setOf("task", "change", "flow")) { "不支持的详情视图" }
@@ -170,7 +170,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             } else state
         }
     }
-    fun loadDocument(slug: String, path: String, revision: String?, callback: (Snapshot) -> Unit) = requestFor("document", "$slug:$path", callback, listOf(slug, "--path", path) + (revision?.let { listOf("--revision", it) } ?: emptyList())) { state, response -> state.copy(document = response, error = null) }
+    fun loadDocument(slug: String, path: String, revision: String?, callback: (Snapshot) -> Unit) = requestFor("document", "$slug:$path", callback, listOf(slug, "--path", path) + (revision?.let { listOf("--document-revision", it) } ?: emptyList())) { state, response -> state.copy(document = response, error = null) }
     fun loadVerification(slug: String, callback: (Snapshot) -> Unit) = loadVerification(slug, false, callback)
     fun loadVerification(slug: String, checkCode: Boolean, callback: (Snapshot) -> Unit) =
         requestFor("verification", "$slug:${if (checkCode) "code" else "records"}", callback, listOf(slug) + if (checkCode) listOf("--check-code") else emptyList()) { state, response -> state.copy(verification = response, error = null) }
@@ -202,13 +202,13 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             } else state
         }
     }
-    /** [featureSlug] 非空时由 Kit 服务端按需求过滤（inspect runs --feature），避免拉全量后在客户端过滤。 */
-    fun loadRuns(featureSlug: String? = null, callback: (Snapshot) -> Unit) {
+    /** [itemSlug] 非空时由 Kit 服务端按需求过滤（inspect runs --item），避免拉全量后在客户端过滤。 */
+    fun loadRuns(itemSlug: String? = null, callback: (Snapshot) -> Unit) {
         val root = snapshot.kitRoot ?: return
-        synchronized(lock) { snapshot = snapshot.copy(selectedRunsFilter = featureSlug) }
-        val filter = featureSlug?.let { listOf("--feature", it) } ?: emptyList()
-        request("runs:$root:${featureSlug.orEmpty()}", callback, relevant = { it.selectedRunsFilter == featureSlug }) { client ->
-            ({ state: Snapshot, response: InspectResponse -> if (state.selectedRunsFilter == featureSlug) state.copy(runs = response, error = null) else state }) to loadPages(client, "runs", filter)
+        synchronized(lock) { snapshot = snapshot.copy(selectedRunsFilter = itemSlug) }
+        val filter = itemSlug?.let { listOf("--item", it) } ?: emptyList()
+        request("runs:$root:${itemSlug.orEmpty()}", callback, relevant = { it.selectedRunsFilter == itemSlug }) { client ->
+            ({ state: Snapshot, response: InspectResponse -> if (state.selectedRunsFilter == itemSlug) state.copy(runs = response, error = null) else state }) to loadPages(client, "runs", filter)
         }
     }
     fun loadRun(id: String, callback: (Snapshot) -> Unit) {
@@ -267,10 +267,10 @@ internal class WorkbenchService(private val project: Project) : Disposable {
                 val page = client.inspect(operation, baseArguments + listOf("--offset", offset.toString(), "--limit", "200")).getOrThrow()
                 if (first != null && first!!.revision != page.revision) break
                 if (first == null) first = page
-                val data = page.data?.asJsonObject ?: error("Feature 列表数据无效")
+                val data = page.data?.asJsonObject ?: error("WorkItem 列表数据无效")
                 val chunk = data.getAsJsonArray("items") ?: error("列表数据无效")
                 chunk.forEach(items::add)
-                val paging = data.getAsJsonObject("page") ?: error("Feature 分页数据无效")
+                val paging = data.getAsJsonObject("page") ?: error("WorkItem 分页数据无效")
                 if (!paging.get("hasMore").asBoolean) {
                     val merged = first!!.data!!.asJsonObject.deepCopy()
                     merged.add("items", items)
@@ -319,11 +319,11 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         ?.getAsJsonObject("protocol")?.getAsJsonArray("operations")
         ?.any { it.isJsonPrimitive && it.asString == operation } == true
 
-    fun completeFeature(slug: String, callback: (Result<Unit>) -> Unit) {
+    fun completeWorkItem(slug: String, callback: (Result<Unit>) -> Unit) {
         val current = snapshot
-        val feature = current.features.firstOrNull { it.get("slug")?.asString == slug }
+        val item = current.detail?.data?.asJsonObject?.getAsJsonObject("summary")?.takeIf { it.get("slug")?.asString == slug }
             ?: return callback(Result.failure(IllegalStateException("未找到需求：$slug")))
-        val blocker = completionBlocker(feature)
+        val blocker = completionBlocker(item)
         if (blocker != null) {
             callback(Result.failure(IllegalStateException(blocker)))
             return
@@ -332,7 +332,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         val python = current.python ?: return callback(Result.failure(IllegalStateException("未配置 Python 解释器")))
         scope.launch {
             if (disposed) return@launch
-            val result = KitClient(Path.of(python), Path.of(root)).completeFeature(slug)
+            val result = KitClient(Path.of(python), Path.of(root)).completeWorkItem(slug, item.get("stateRevision").asString)
             ApplicationManager.getApplication().invokeLater {
                 if (!disposed) callback(result)
             }
@@ -353,7 +353,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
 
     override fun dispose() { disposed = true; vfsDebounce.getAndSet(null)?.cancel(); coroutineJobs.values.forEach { it.cancel() }; coroutineJobs.clear() }
 
-    data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val features: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null, val handoff: HandoffData? = null, val search: SearchData? = null, val selectedHandoff: String? = null, val selectedSearch: String? = null, val selectedRun: String? = null, val selectedRunsFilter: String? = null, val change: InspectResponse? = null, val flow: InspectResponse? = null) {
+    data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val items: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null, val handoff: HandoffData? = null, val search: SearchData? = null, val selectedHandoff: String? = null, val selectedSearch: String? = null, val selectedRun: String? = null, val selectedRunsFilter: String? = null, val change: InspectResponse? = null, val flow: InspectResponse? = null) {
         companion object { fun empty(root: String? = null, python: String? = null) = Snapshot(root, python, null, emptyList(), null, null) }
     }
     companion object {
@@ -362,18 +362,10 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         private const val VFS_DEBOUNCE_MILLIS = 500L
         fun getInstance(project: Project): WorkbenchService = project.getService(WorkbenchService::class.java)
 
-        internal fun completionBlocker(feature: JsonObject): String? {
-            if (feature.get("status")?.asString != "testing") return "仅测试中的需求可以标记完成"
-            val plan = feature.getAsJsonObject("planSummary") ?: return null
-            fun JsonObject.int(name: String) = get(name)?.takeIf { it.isJsonPrimitive }?.runCatching { asInt }?.getOrNull() ?: 0
-            val total = plan.int("total")
-            val completed = plan.int("completed")
-            if (total > completed) return "仍有 ${total - completed} 个计划项未完成"
-            val trusted = plan.getAsJsonObject("trustedProgress")
-            if (trusted?.get("applicable")?.asBoolean == true && trusted.int("total") > trusted.int("completed")) {
-                return "仍有 ${trusted.int("total") - trusted.int("completed")} 个计划项缺少可信凭据"
-            }
-            return null
+        internal fun completionBlocker(item: JsonObject): String? {
+            val action = item.getAsJsonObject("completionAction") ?: return "请先读取当前需求的完成条件"
+            return if (action.get("available")?.asBoolean == true) null
+            else action.get("reason")?.takeUnless { it.isJsonNull }?.asString ?: "仍有未完成事项"
         }
 
         /**
@@ -381,13 +373,13 @@ internal class WorkbenchService(private val project: Project) : Disposable {
          * 返回首个命中的需求 slug。binding.repository 是 Kit 仓库 id，经 repoPathById 映射到绝对路径。
          */
         internal fun matchBranchSlug(
-            features: List<JsonObject>,
+            items: List<JsonObject>,
             repoPathById: Map<String, String>,
             repoBranches: List<Triple<String, String, String>>,
         ): String? {
-            for (feature in features) {
-                val slug = feature.get("slug")?.takeIf { it.isJsonPrimitive }?.asString ?: continue
-                val bindings = feature.getAsJsonArray("repositoryBindings") ?: continue
+            for (item in items) {
+                val slug = item.get("slug")?.takeIf { it.isJsonPrimitive }?.asString ?: continue
+                val bindings = item.getAsJsonArray("repositoryBindings") ?: continue
                 for (bindingElem in bindings) {
                     if (!bindingElem.isJsonObject) continue
                     val binding = bindingElem.asJsonObject

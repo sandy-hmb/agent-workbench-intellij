@@ -147,13 +147,13 @@ internal object WorkbenchUi {
     fun input(field:JTextField) { field.background=surface;field.foreground=text;field.caretColor=text;field.border=BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(border),JBUI.Borders.empty(6,9));field.font=UIUtil.getLabelFont().deriveFont(Font.PLAIN,JBUI.scale(11).toFloat());field.minimumSize=Dimension(80,30) }
     fun combo(combo:JComboBox<*>) { combo.background=surface;combo.foreground=text;combo.font=UIUtil.getLabelFont().deriveFont(Font.PLAIN,JBUI.scale(11).toFloat());combo.border=BorderFactory.createLineBorder(border);combo.minimumSize=Dimension(100,30) }
     fun empty(title: String, explanation: String) = padded(column(10, label(title, 15, bold = true), copy(explanation)), 28, 20)
-    fun status(value: String?) = when(value) { "planning" -> "规划中"; "development" -> "开发中"; "testing" -> "测试中"; "paused" -> "已暂停"; "done" -> "已完成"; else -> "未记录" }
+    fun status(value: String?) = when(value) { "active" -> "进行中"; "cancelled" -> "已取消"; "paused" -> "已暂停"; "done" -> "已完成"; else -> "未记录" }
     fun stage(value: String?) = when(value) {
-        "feature.context" -> "读取上下文"; "feature.classify" -> "需求分级"; "feature.analyze" -> "跨仓分析"; "feature.design" -> "需求与技术设计"
-        "feature.prepare-branch" -> "准备工作分支"; "feature.implement" -> "开发实现"; "feature.verify" -> "验证与审查"; "feature.submit-test" -> "提交测试"; "feature.complete" -> "需求完成"; null -> "历史记录"; else -> value
+        "item.context" -> "读取上下文"; "item.classify" -> "需求分级"; "item.analyze" -> "跨仓分析"; "item.design" -> "需求与技术设计"
+        "item.prepare-branch" -> "准备工作分支"; "item.implement" -> "开发实现"; "item.verify" -> "验证与审查"; "item.submit-test" -> "提交测试"; "item.complete" -> "需求完成"; null -> "历史记录"; else -> value
     }
     fun state(value: String?) = when(value) {
-        "passed", "succeeded" -> "检查通过"; "failed" -> "检查失败"; "complete" -> "完整"; "incomplete" -> "记录不完整"; "legacy" -> "历史格式"; "missing" -> "未记录"
+        "passed", "succeeded" -> "检查通过"; "failed" -> "检查失败"; "complete" -> "完整"; "incomplete" -> "记录不完整"; "missing" -> "未记录"
         "valid" -> "当前代码有效"; "invalid" -> "当前记录不适用"; "not_checked" -> "尚未核对"; "historical" -> "历史验证"
         "matched" -> "一致"; "changed" -> "已变化"; "unknown" -> "无法判断"; "running" -> "记录为运行中"; "skipped" -> "已跳过"; "removed" -> "已删除的历史步骤"
         "inactive" -> "未激活"; "drifted" -> "内容已漂移"; else -> value ?: "未记录"
@@ -209,21 +209,17 @@ internal class WorkbenchTabs : JPanel(BorderLayout()) {
     init { background = WorkbenchUi.bg; bar.border = BottomLine(WorkbenchUi.border); add(bar, BorderLayout.NORTH); add(cards) }
     fun addTab(title: String, content: JComponent) {
         val index = buttons.size
-        val button = WorkbenchUi.button(title, true) { selectedIndex = index }.apply { preferredSize = Dimension(preferredSize.width + 8, JBUI.scale(43)); name = "feature-tab-$index" }
+        val button = WorkbenchUi.button(title, true) { selectedIndex = index }.apply { preferredSize = Dimension(preferredSize.width + 8, JBUI.scale(43)); name = "item-tab-$index" }
         buttons += button; bar.add(button); cards.add(content, index.toString()); updateSelection()
     }
     fun titleAt(index: Int) = buttons[index].text
     fun setTitleAt(index: Int, value: String) { buttons[index].text = value }
     private fun updateSelection() { buttons.forEachIndexed { i, b -> b.foreground = if (i == selectedIndex) WorkbenchUi.text else WorkbenchUi.muted; b.isBorderPainted = i == selectedIndex; b.border = if (i == selectedIndex) BorderFactory.createMatteBorder(0,0,2,0,WorkbenchUi.accent) else JBUI.Borders.empty(0,0,2,0) } }
 }
-/**
- * Kit 目前用中文字面量表达审阅状态；集中在此处，Kit 一旦改为结构化枚举只需改这里。
- * 契约来源：agent-workbench/scripts/workspace_status.py 的 DOCUMENT_REVIEW_VALUES
- * （{"未生成","待审阅","已批准"}），由 feature README 的「需求/设计/计划审阅」元数据行解析而来。
- */
+/** Approval states are the shared Kit enum, never parsed from Markdown. */
 internal object KitSemantics {
-    const val REVIEW_APPROVED = "已批准"
-    fun reviewPending(value: String?): Boolean = value != null && value != REVIEW_APPROVED
+    const val REVIEW_APPROVED = "approved"
+    fun reviewPending(value: String?): Boolean = value in setOf("pending", "missing", "changed", "needs-review")
 }
 
 internal fun JsonElement?.obj(): JsonObject? = if (this?.isJsonObject == true) asJsonObject else null

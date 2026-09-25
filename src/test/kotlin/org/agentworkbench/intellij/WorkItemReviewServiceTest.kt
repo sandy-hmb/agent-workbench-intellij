@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class FeatureReviewServiceTest {
+class WorkItemReviewServiceTest {
     @Test
     fun unexpectedWorkerFailureBecomesVisibleTerminalState() {
         val (repository, row) = runReviewLookup("service") { error("synthetic failure") }

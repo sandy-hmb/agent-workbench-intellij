@@ -12,7 +12,7 @@ import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import org.agentworkbench.intellij.WorkbenchService
 import org.agentworkbench.intellij.WorkbenchSettings
-import org.agentworkbench.intellij.review.FeatureReviewService
+import org.agentworkbench.intellij.review.WorkItemReviewService
 import org.agentworkbench.intellij.review.ReviewCredentials
 import org.agentworkbench.intellij.review.ReviewHost
 import org.agentworkbench.intellij.review.ReviewPlatform
@@ -107,7 +107,7 @@ internal class WorkbenchConfigurable(private val project: Project) : Configurabl
         settings.replaceReviewHosts(kitRoot, hosts)
         removedReviewHosts.clear()
         reviewEditors.forEach(ReviewHostEditor::markSaved)
-        FeatureReviewService.getInstance(project).invalidate()
+        WorkItemReviewService.getInstance(project).invalidate()
         if (TrustedProjects.isProjectTrusted(project)) WorkbenchService.getInstance(project).bind(kitRoot, python) { }
     }
 

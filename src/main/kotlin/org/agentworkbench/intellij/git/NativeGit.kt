@@ -22,7 +22,7 @@ internal class NativeGit(private val executable: String = "git") {
     }.getOrElse { Snapshot.Unavailable(it.message ?: "Git 现场不可读取") }
     fun remotes(root: File): List<String> = runCatching { requireRepositoryRoot(root); read(root, "remote").lines().filter(String::isNotBlank) }.getOrDefault(emptyList())
     fun lastCommitTime(root:File):String? = runCatching { requireRepositoryRoot(root);read(root,"log","-1","--format=%cI").trim().takeIf(String::isNotEmpty) }.getOrNull()
-    /** 使用 Feature 记录的分支推断评审所对应 remote；不依赖当前 checkout。 */
+    /** 使用 WorkItem 记录的分支推断评审所对应 remote；不依赖当前 checkout。 */
     fun reviewRemote(root: File, workBranch: String, selectedRemote: String? = null): ReviewRemote = runCatching {
         requireRepositoryRoot(root)
         require(workBranch.isNotBlank() && workBranch.none { it.isISOControl() }) { "需求工作分支无效" }

@@ -1,8 +1,10 @@
 # Agent Workbench IntelliJ 插件
 
-Agent Workbench 是 IntelliJ IDEA 和 Rebased 中以只读为主的工作流工作台。它把 `agent-workbench` 记录的工作区、Feature、任务、文档、验证、流程和 Run 集中展示，并把每个已登记业务仓的 Log、Diff、Commit、Branches、冲突处理和 Fetch 入口交给宿主原生 Git。
+Agent Workbench 是 IntelliJ IDEA 和 Rebased 中以只读为主的工作流工作台。它把 `agent-workbench` 记录的工作区、WorkItem、任务、文档、验证、流程和 Run 集中展示，并把每个已登记业务仓的 Log、Diff、Commit、Branches、冲突处理和 Fetch 入口交给宿主原生 Git。
 
-插件主要解决“查看和定位”问题：不用在工作流仓、多个业务仓和 Git 工具之间反复切换。它不提供 Agent 终端，不调用模型，不创建 Feature；唯一的状态写操作是用户二次确认后，通过 Kit 既有入口将 `testing` Feature 标记为 `done`。
+插件主要解决“查看和定位”问题：不用在工作流仓、多个业务仓和 Git 工具之间反复切换。它不提供 Agent 终端，不调用模型，不创建 WorkItem；唯一的状态写操作是用户二次确认后，通过 Kit 既有入口将 已满足验收的 WorkItem 标记为 `done`。
+
+插件 1.0 仅支持 Kit 2.0 / Inspect 2；旧协议会明确拒绝。
 
 ## 它和 agent-workbench 的关系
 
@@ -20,7 +22,7 @@ IDEA / Rebased
                └── .workspace 配置登记的业务仓
 ```
 
-插件通过 `inspect --api-major 1 --json` 读取 Kit 的公开只读协议；标记完成时调用 `kit.py feature set-status <slug> done`。业务仓列表来自 `.workspace/workspace.json` 的登记内容，Git 分支、工作区变更、上游领先/落后和冲突来自宿主 Git 或只读 Git 信息。插件不会递归扫描父目录，也不会把未登记兄弟仓加入工作台。
+插件通过 `inspect --api-major 2 --json` 读取 Kit 的公开只读协议；标记完成时调用 `kit.py item complete <slug> --state-revision <stateRevision>`。业务仓列表来自 `.workspace/workspace.json` 的登记内容，Git 分支、工作区变更、上游领先/落后和冲突来自宿主 Git 或只读 Git 信息。插件不会递归扫描父目录，也不会把未登记兄弟仓加入工作台。
 
 ## 快速开始
 
@@ -31,13 +33,13 @@ IDEA / Rebased
 ### 前置条件
 
 - IntelliJ IDEA 2025.2（Build 252）或 Rebased 1.1.12（Build 262）及兼容版本。
-- Kit 版本 `1.7.0`，与插件 `0.5.0` 配套使用；可读取旧 Feature，但不承诺新旧程序版本混用。
+- Kit 版本 `2.0.0`，与插件 `1.0.0` 配套使用；仅接受当前 item 格式，不提供旧格式迁移。
 - 可执行的 Python 3，通常是 `python3`。
 - 当前项目为受信任项目，并已安装宿主自带的 Git 支持。
 
 ### 安装开发包
 
-可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-0.5.0.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
+可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-1.0.0.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
 
 如需从源码构建，在本仓执行：
 
@@ -48,7 +50,7 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
   test buildPlugin
 ```
 
-安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `0.5.0`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
+安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `1.0.0`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
 
 ### 首次打开工作区
 
@@ -78,13 +80,13 @@ my-project-workspace/
 
 | 页面 | 内容 |
 | --- | --- |
-| 工作区总览 | Kit 路径、业务仓数量、进行中的 Feature、未提交文件和需要关注的现场 |
+| 工作区总览 | Kit 路径、业务仓数量、进行中的 WorkItem、未提交文件和需要关注的现场 |
 | 业务仓库 | 当前分支、工作区是否干净、上游同步、最近提交、搜索和状态筛选 |
-| Feature 工作台 | 默认查看未完成需求，也可按全部生命周期状态、名称和关联仓筛选 |
-| 接手包 | 预览并复制当前任务、阶段、验证摘要和带版本来源，旧 Kit 自动回退兼容提示词 |
+| WorkItem 工作台 | 默认查看未完成需求，也可按全部生命周期状态、名称和关联仓筛选 |
+| 接手包 | 预览并复制当前任务、阶段、验证摘要和带版本来源，引用当前文档和证据 |
 | 历史检索 | 按关键词、仓库和状态搜索当前工作区的需求、设计、计划与验证记录 |
-| Feature 详情 | 计划、变更、流程三页；按需求恢复页面和任务位置；原始文档在 IDEA 编辑器打开；测试中需求可经二次确认标记完成 |
-| 代码评审 | 在 Feature“变更”中按已记录工作分支查找 GitHub PR 或 GitLab MR，并打开评审链接 |
+| WorkItem 详情 | 计划、变更、流程三页；按需求恢复页面和任务位置；原始文档在 IDEA 编辑器打开；满足验收的工作项可确认完成 |
+| 代码评审 | 在 WorkItem“变更”中按已记录工作分支查找 GitHub PR 或 GitLab MR，并打开评审链接 |
 | 流程记录 | 按 Run 查看已有记录、配置匹配和结果，不会重新执行流程 |
 | 读取诊断 | 显示缺失 Kit、版本不兼容、损坏记录和单仓读取失败原因 |
 
@@ -92,7 +94,7 @@ my-project-workspace/
 
 ### 查询代码评审
 
-在 `Settings | Tools | Agent Workbench` 的“代码托管服务”配置 GitHub 或 GitLab 服务和读取 Token。Token 仅保存到 IDE 的密码库，工作区设置文件只保存服务地址和 SSH 主机别名。首次打开 Feature 默认计划页；变更页默认“需求分支已提交”，代码评审与当前工作目录可按需切换。已提交页展示多仓比较范围、文件数、读取异常和工作目录变化；接手起点仅使用记录中的 commit 或用户输入的 commit，不自动取首次打开的 HEAD。比较失败不会切换到工作目录 Diff。代码评审仅在打开时查询同仓 PR/MR。流程页分别展示 commit／PR、验证、部署和外部验收；未知保持未知。
+在 `Settings | Tools | Agent Workbench` 的“代码托管服务”配置 GitHub 或 GitLab 服务和读取 Token。Token 仅保存到 IDE 的密码库，工作区设置文件只保存服务地址和 SSH 主机别名。首次打开 WorkItem 默认计划页；变更页默认“需求分支已提交”，代码评审与当前工作目录可按需切换。已提交页展示多仓比较范围、文件数、读取异常和工作目录变化；接手起点仅使用记录中的 commit 或用户输入的 commit，不自动取首次打开的 HEAD。比较失败不会切换到工作目录 Diff。代码评审仅在打开时查询同仓 PR/MR。流程页分别展示 commit／PR、验证、部署和外部验收；未知保持未知。
 
 GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab Token 需要 `read_api`。未配置服务、Token 无效、仓库权限不足和查询失败会在对应仓库行显示，不会被误报为“未找到 PR/MR”。首页和仓库列表不会查询评审。
 
@@ -105,7 +107,7 @@ GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab T
 - `Commit` 只把所选仓库的变更作为初始选区，最终提交由宿主对话框和用户确认。
 - `Branches` 和冲突处理只传递所选仓库的上下文。
 - `Fetch` 要求明确仓库和 remote，在后台任务中执行（可取消），结束后以宿主通知汇总逐仓结果。
-- 查看 Feature 不会 checkout 分支；需求分支比较使用记录中的固定 commit。
+- 查看 WorkItem 不会 checkout 分支；需求分支比较使用记录中的固定 commit。
 
 插件不会自动 Fetch、stash、checkout、merge、解决冲突、提交、推送或修改工作流记录。
 
@@ -117,12 +119,12 @@ GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab T
 
 ### 提示“Inspect 信封格式无效”
 
-旧 Kit 缺少当前插件必需的定向投影时会提示版本不兼容。将绑定的工作流仓升级到与插件 `0.5.0` 配套的 Kit `1.7.0`，再点击“绑定并刷新”：
+旧 Kit 缺少当前插件必需的定向投影时会提示版本不兼容。将绑定的工作流仓升级到与插件 `1.0.0` 配套的 Kit `2.0.0`，再点击“绑定并刷新”：
 
 ```bash
 cd /path/to/agent-workbench
 cat VERSION
-python3 scripts/kit.py inspect --root . --api-major 1 --json workspace
+python3 scripts/kit.py inspect --root . --api-major 2 --json workspace
 ```
 
 正常响应应是 JSON 信封，且 `operation` 为 `workspace`。
@@ -133,7 +135,7 @@ python3 scripts/kit.py inspect --root . --api-major 1 --json workspace
 
 ### 工作台没有数据
 
-确认项目已受信任、Kit 根目录包含 `scripts/kit.py` 和 `.workspace/`，Python 路径可执行，并且 Kit 为配套的 `1.7.0`。未初始化的 Kit 只显示维护模式信息，插件不会自动初始化工作区。
+确认项目已受信任、Kit 根目录包含 `scripts/kit.py` 和 `.workspace/`，Python 路径可执行，并且 Kit 为配套的 `2.0.0`。未初始化的 Kit 只显示维护模式信息，插件不会自动初始化工作区。
 
 ### 为什么没有所有父目录项目
 
@@ -151,4 +153,4 @@ python3 scripts/kit.py inspect --root . --api-major 1 --json workspace
 
 测试使用独立平台沙箱；集成测试只有显式传入 `integrationRoot` 和 `integrationEntry` 时才读取外部工作区，所有查询保持只读。Rebased 平台测试和 Plugin Verifier 需要单独检查，构建成功不等于所有宿主版本都已验收。
 
-需求、设计、实施计划和宿主验收记录集中维护在相邻 Kit 仓库的 [`docs/development/features/intellij-workbench-v1/`](https://github.com/sandy-hmb/agent-workbench/tree/main/docs/development/features/intellij-workbench-v1)。Kit 的 Inspect 契约见 [`docs/reference/workbench-inspect.md`](https://github.com/sandy-hmb/agent-workbench/blob/main/docs/reference/workbench-inspect.md)，工作流仓库见 [`sandy-hmb/agent-workbench`](https://github.com/sandy-hmb/agent-workbench)。
+需求、设计、实施计划和宿主验收记录集中维护在相邻 Kit 仓库的 [`docs/development/items/intellij-workbench-v1/`](https://github.com/sandy-hmb/agent-workbench/tree/main/docs/development/items/intellij-workbench-v1)。Kit 的 Inspect 契约见 [`docs/reference/workbench-inspect.md`](https://github.com/sandy-hmb/agent-workbench/blob/main/docs/reference/workbench-inspect.md)，工作流仓库见 [`sandy-hmb/agent-workbench`](https://github.com/sandy-hmb/agent-workbench)。

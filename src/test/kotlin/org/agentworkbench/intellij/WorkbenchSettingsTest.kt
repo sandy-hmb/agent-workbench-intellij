@@ -7,16 +7,16 @@ import java.nio.file.Files
 import org.agentworkbench.intellij.ui.WorkbenchToolWindowFactory
 
 class WorkbenchSettingsTest {
-    @Test fun defaultsFeatureListToIncomplete() {
+    @Test fun defaultsWorkItemListToIncomplete() {
         val root = Files.createTempDirectory("workbench-default-filter")
         val settings = WorkbenchSettings()
-        assertEquals("未完成", settings.featureStatus(root.toString()))
+        assertEquals("未完成", settings.itemStatus(root.toString()))
         settings.preference(root.toString()).status = "全部"
-        assertEquals("全部", settings.featureStatus(root.toString()))
+        assertEquals("全部", settings.itemStatus(root.toString()))
 
         val explicit = Files.createTempDirectory("workbench-explicit-filter")
         settings.preference(explicit.toString()).status = "testing"
-        assertEquals("testing", settings.featureStatus(explicit.toString()))
+        assertEquals("testing", settings.itemStatus(explicit.toString()))
     }
 
     @Test fun isolatesRootsAndBoundsReadingPositions() {
@@ -32,11 +32,11 @@ class WorkbenchSettingsTest {
         assertTrue(settings.preference(first.toString()).positions.none { it.key == "document-0" })
     }
 
-    @Test fun featureViewMigratesGlobalTabOnlyOnceAndIsolatesSelections() {
+    @Test fun itemViewMigratesGlobalTabOnlyOnceAndIsolatesSelections() {
         val settings = WorkbenchSettings()
         val root = Files.createTempDirectory("workbench-view").toString()
         settings.preference(root).tab = 2
-        val first = settings.featureView(root, "first")
+        val first = settings.itemView(root, "first")
         assertEquals(2, first.tab)
         first.tab = 1
         first.task = "T06"
@@ -45,12 +45,12 @@ class WorkbenchSettingsTest {
         first.filter = "待验证"
         first.offset = 42
         settings.preference(root).tab = 0
-        val second = settings.featureView(root, "second")
+        val second = settings.itemView(root, "second")
         assertEquals(0, second.tab)
         assertEquals("", second.task)
-        assertEquals(1, settings.featureView(root, "first").tab)
-        assertEquals("src/A.kt", settings.featureView(root, "first").file)
-        assertEquals(42, settings.featureView(root, "first").offset)
+        assertEquals(1, settings.itemView(root, "first").tab)
+        assertEquals("src/A.kt", settings.itemView(root, "first").file)
+        assertEquals(42, settings.itemView(root, "first").offset)
     }
 
     @Test fun discoversKitInCurrentOrDirectAgentWorkbenchDirectory() {

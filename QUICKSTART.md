@@ -12,7 +12,7 @@
    * **Windows / Linux**：`File` ➔ `Settings...`（快捷键 `Ctrl + Alt + S`）
 2. 在左侧导航栏选择 **Plugins（插件）**；
 3. 点击右上角的 ⚙️ 齿轮图标，选择 **Install Plugin from Disk...（从磁盘安装插件）**；
-4. 选择本项目的构建包（如 `build/distributions/agent-workbench-intellij-0.5.0.zip`）；
+4. 选择本项目的构建包（如 `build/distributions/agent-workbench-intellij-1.0.0.zip`）；
 5. 安装完成后根据提示重启 IDE。
 
 ---
@@ -26,7 +26,7 @@ my-project-workspace/              # 用 IDEA 打开此父目录
 ├── agent-workbench/               # 工作流 Kit 仓（包含 .workspace/ 与需求文档）
 │   ├── .workspace/
 │   │   └── workspace.json         # 登记已接入的业务代码仓
-│   └── docs/development/features/ # 需求规范文件（requirements.md 等）
+│   └── docs/development/items/ # 需求规范文件（requirements.md 等）
 ├── order-service/                 # 业务代码仓 A（后端微服务）
 ├── user-service/                  # 业务代码仓 B（用户服务）
 └── frontend-dashboard/            # 业务代码仓 C（前端管理端）
@@ -52,7 +52,7 @@ my-project-workspace/              # 用 IDEA 打开此父目录
 
 ## 步骤 4：主页全景（首屏即览，无需滚动）
 
-在左侧需求列表中点击任意 Feature（例如 `order-export-optimization` / 订单导出功能优化），中央编辑区将打开对应的需求工作台。
+在左侧需求列表中点击任意 WorkItem（例如 `order-export-optimization` / 订单导出功能优化），中央编辑区将打开对应的需求工作台。
 
 在 **「总览与说明」** 首页中，你可以在**同一个屏幕内完全免滚动**掌握需求的三个核心维度：
 

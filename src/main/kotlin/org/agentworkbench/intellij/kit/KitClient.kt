@@ -18,7 +18,7 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
         require(entry.isRegularFile()) { "未找到 Kit 入口" }
         val command = GeneralCommandLine(python.absolutePathString()).apply {
             withWorkDirectory(root.toFile())
-            addParameters("-B", entry.toString(), "inspect", "--root", root.toString(), "--api-major", "1", "--json", operation, *arguments.toTypedArray())
+            addParameters("-B", entry.toString(), "inspect", "--root", root.toString(), "--api-major", "2", "--json", operation, *arguments.toTypedArray())
         }
         val process = command.createProcess()
         val stdout = STREAM_POOL.submit<String> { readBounded(process.inputStream, MAX_STDOUT, process) }
@@ -34,17 +34,6 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             val text = stdout.get(1, TimeUnit.SECONDS)
             val processError = stderr.get(1, TimeUnit.SECONDS)
             val exitCode = process.exitValue()
-            if (operation == "projection" && exitCode != 0 && (text + processError).let {
-                    it.contains("invalid choice: 'projection'") || it.contains("未知子命令：projection") || it.contains("unrecognized arguments: --view")
-                }) {
-                throw InspectReadException(listOf(InspectDiagnostic("KIT_PROJECTION_UNAVAILABLE", "当前 Kit 版本不兼容：缺少 inspect projection，请升级 Kit。")))
-            }
-            if (exitCode == 2 && (text.lineSequence() + processError.lineSequence()).any {
-                    it.trim() == "未知子命令：inspect" || it.trim().startsWith("kit.py: error: argument") && it.contains("invalid choice: 'inspect'")
-                }) {
-                throw InspectReadException(listOf(InspectDiagnostic("KIT_INSPECT_UNAVAILABLE",
-                    "当前绑定的 Kit 尚不支持工作台查询，请升级此工作流仓的 Inspect 配套脚本后重新绑定。Kit：$root")))
-            }
             val response = InspectProtocol.parse(text, operation, root.toString()).getOrElse { failure ->
                 LOG.warn("Inspect $operation 响应不可解析（退出码 $exitCode）：${failure.message}；stderr=${processError.take(2000)}")
                 val diagnostic = if (exitCode != 0) InspectDiagnostic("KIT_PROCESS_FAILED",
@@ -102,13 +91,13 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
         }
     }
 
-    fun completeFeature(slug: String): Result<Unit> =
-        tool("feature", listOf("set-status", slug, "done")).map { }
+    fun completeWorkItem(slug: String, revision: String): Result<Unit> =
+        tool("item", listOf("complete", slug, "--state-revision", revision)).map { }
 
     private companion object {
         val LOG = Logger.getInstance(KitClient::class.java)
-        val OPERATIONS = setOf("workspace", "features", "feature", "projection", "document", "verification", "handoff", "search", "workflow", "runs", "run")
-        val TOOLS = setOf("doctor", "describe", "brief", "feature")
+        val OPERATIONS = setOf("workspace", "items", "projection", "document", "verification", "handoff", "search", "workflow", "runs", "run")
+        val TOOLS = setOf("doctor", "describe", "brief", "item")
         const val TIMEOUT_MILLIS = 12_000
         const val VERIFY_TIMEOUT_MILLIS = 32_000
         const val MAX_STDOUT = 8 * 1024 * 1024

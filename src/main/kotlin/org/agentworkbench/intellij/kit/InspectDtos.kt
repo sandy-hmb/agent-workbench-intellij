@@ -53,7 +53,7 @@ internal data class HandoffData(
                     HandoffSource(
                         source.text("kind"),
                         source.text("path"),
-                        source.text("revision"),
+                        source.text("documentRevision"),
                         source.number("startLine"),
                     )
                 },
@@ -113,7 +113,7 @@ internal object InspectProtocol {
     fun parse(text: String, expectedOperation: String, expectedRoot: String): Result<InspectResponse> = runCatching {
         val envelope = com.google.gson.JsonParser.parseString(text).takeIf(JsonElement::isJsonObject)?.asJsonObject ?: error("Inspect 信封格式无效")
         val version = envelope.requiredObject("apiVersion")
-        require(version.requiredInt("major") == 1) { "Inspect 主版本不兼容" }; version.requiredInt("minor")
+        require(version.requiredInt("major") == 2) { "Inspect 主版本不兼容" }; version.requiredInt("minor")
         require(envelope.requiredString("operation") == expectedOperation) { "Inspect operation 不匹配" }
         val status = envelope.requiredString("status"); require(status in setOf("ok", "partial", "error")) { "Inspect 状态未知" }
         val observedAt = Instant.parse(envelope.requiredString("observedAt"))
@@ -128,7 +128,7 @@ internal object InspectProtocol {
             )
         }
         val root = envelope.nullableString("root")
-        val revision = envelope.nullableString("revision")
+        val revision = envelope.nullableString("responseRevision")
         val data = envelope.get("data")?.takeUnless(JsonElement::isJsonNull)
         if (status != "error") {
             require(root == expectedRoot) { "Inspect 根目录不匹配" }
@@ -141,11 +141,10 @@ internal object InspectProtocol {
 
     private fun validate(operation: String, data: JsonObject) = when (operation) {
         "workspace" -> { data.requiredString("mode"); data.requiredObject("identity"); data.requiredArray("repositories").forEach(::repository); data.requiredObject("localContext"); data.requiredObject("configuration"); data.requiredObject("protocol") }
-        "features", "runs" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..200) { "Inspect page limit 无效" }; data.requiredArray("items") }
+        "items", "runs" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..200) { "Inspect page limit 无效" }; data.requiredArray("items") }
         "search" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..50) { "Inspect search page limit 无效" }; data.requiredString("query"); data.requiredArray("items"); SearchData.parse(data) }
-        "feature" -> { data.requiredObject("summary"); data.requiredArray("tasks"); data.requiredArray("files"); data.requiredArray("artifacts"); data.requiredObject("progression"); data.requiredString("featureRevision") }
         "projection" -> {
-            data.requiredString("featureRevision")
+            data.requiredString("stateRevision")
             when (data.requiredString("view")) {
                 "summary" -> data.requiredObject("summary")
                 "task" -> { data.requiredObject("summary"); data.requiredArray("tasks"); data.requiredObject("progression") }
@@ -155,13 +154,14 @@ internal object InspectProtocol {
                 else -> error("Inspect projection view 无效")
             }
         }
-        "handoff" -> { data.requiredObject("progression"); data.requiredString("featureRevision"); HandoffData.parse(data) }
-        "document" -> { data.requiredString("path"); data.requiredString("revision"); data.requiredString("content") }
+        "handoff" -> { data.requiredObject("progression"); data.requiredString("stateRevision"); HandoffData.parse(data) }
+        "document" -> { data.requiredString("path"); data.requiredString("documentRevision"); data.requiredString("content") }
         "verification" -> {
-            data.requiredString("slug"); data.requiredString("featureRevision"); data.requiredArray("batches"); data.requiredArray("repositoryStates"); data.requiredString("applicability")
-            data.get("selectedBatch")?.takeUnless(JsonElement::isJsonNull)?.let {
-                val batch = it.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: error("Inspect selectedBatch 格式无效")
-                batch.requiredString("id"); batch.requiredString("recordedAt"); batch.requiredString("recordedResult"); batch.requiredString("recordedReview"); batch.requiredString("completeness"); batch.requiredArray("checks")
+            data.requiredString("slug"); data.requiredString("stateRevision")
+            data.requiredArray("repositoryStates"); data.requiredString("applicability")
+            data.get("record")?.takeUnless(JsonElement::isJsonNull)?.let {
+                val record = it.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: error("验证记录格式无效")
+                record.requiredString("id"); record.requiredString("recordedAt"); record.requiredString("result"); record.requiredArray("checks")
             }
         }
         "workflow" -> { data.requiredString("configState"); data.requiredArray("extensions") }

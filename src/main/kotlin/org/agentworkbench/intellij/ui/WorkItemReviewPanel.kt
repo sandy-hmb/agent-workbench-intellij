@@ -19,8 +19,8 @@ import javax.swing.JComboBox
 import javax.swing.JLabel
 import javax.swing.JPanel
 
-/** Feature 变更页中的只读 PR/MR 入口。 */
-internal class FeatureReviewPanel(
+/** WorkItem 变更页中的只读 PR/MR 入口。 */
+internal class WorkItemReviewPanel(
     private val project: Project,
     private val onRefresh: () -> Unit,
     private val onConfigure: () -> Unit,
@@ -56,7 +56,7 @@ internal class FeatureReviewPanel(
     fun render(rows: List<ReviewRow>) {
         body.removeAll()
         if (rows.isEmpty()) {
-            body.add(messageRow("配置代码托管服务后，可按 Feature 工作分支查询 PR/MR。", configure = true))
+            body.add(messageRow("配置代码托管服务后，可按 WorkItem 工作分支查询 PR/MR。", configure = true))
         } else {
             rows.forEach { body.add(row(it)); body.add(javax.swing.Box.createVerticalStrut(JBUI.scale(4))) }
         }

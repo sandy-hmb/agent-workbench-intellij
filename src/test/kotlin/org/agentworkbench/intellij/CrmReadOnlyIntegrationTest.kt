@@ -37,12 +37,12 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
         val before = snapshot(root)
         try {
             val client = KitClient(launcher, root)
-            val responses = listOf("workspace", "features", "workflow", "runs").associateWith { client.inspect(it).getOrThrow() }
+            val responses = listOf("workspace", "items", "workflow", "runs").associateWith { client.inspect(it).getOrThrow() }
             assertTrue(responses.getValue("workspace").data!!.asJsonObject.getAsJsonArray("repositories").size() > 1)
-            val features = responses.getValue("features").data!!.asJsonObject.getAsJsonArray("items")
-            assertTrue(features.size() > 0)
-            val slug = features[0].asJsonObject.get("slug").asString
-            client.inspect("feature", listOf(slug)).getOrThrow()
+            val items = responses.getValue("items").data!!.asJsonObject.getAsJsonArray("items")
+            assertTrue(items.size() > 0)
+            val slug = items[0].asJsonObject.get("slug").asString
+            client.inspect("item", listOf(slug)).getOrThrow()
             client.inspect("document", listOf(slug, "--path", "README.md")).getOrThrow()
             client.inspect("verification", listOf(slug)).getOrThrow()
             val runs = responses.getValue("runs").data!!.asJsonObject.getAsJsonArray("items")
@@ -50,7 +50,7 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
 
             val service = WorkbenchService.getInstance(project)
             service.bind(root.toString(), launcher.toString()) { }
-            PlatformTestUtil.waitWithEventsDispatching("真实工作区绑定", { service.snapshot().workspace != null && service.snapshot().features.isNotEmpty() }, 10)
+            PlatformTestUtil.waitWithEventsDispatching("真实工作区绑定", { service.snapshot().workspace != null && service.snapshot().items.isNotEmpty() }, 10)
             val wasDark=com.intellij.ui.JBColor.isBright().not()
             try {
                 for(dark in listOf(true,false)) {
@@ -61,10 +61,10 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
                         panel.setSize(1440,960);panel.refresh();panel.setActive(true);settle(panel)
                         PlatformTestUtil.waitWithEventsDispatching("Git 现场已显示", { panel.isGitSnapshotReady() },10)
                         panel.navigate("overview");settle(panel);capture(panel,"crm-overview-$theme")
-                        panel.navigate("features");settle(panel);capture(panel,"crm-features-$theme")
-                        panel.selectFeature(slug)
+                        panel.navigate("items");settle(panel);capture(panel,"crm-items-$theme")
+                        panel.selectWorkItem(slug)
                         PlatformTestUtil.waitWithEventsDispatching("计划已显示", { service.snapshot().detail != null },10)
-                        settle(panel);capture(panel,"crm-feature-$theme")
+                        settle(panel);capture(panel,"crm-item-$theme")
                         val tabs=descendants(panel).filterIsInstance<org.agentworkbench.intellij.ui.WorkbenchTabs>().first { it.titleAt(0)=="计划" }
                         tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.CHANGES
                         PlatformTestUtil.waitWithEventsDispatching("变更投影", { service.snapshot().change != null },10)
@@ -73,7 +73,7 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
                         PlatformTestUtil.waitWithEventsDispatching("流程投影", { service.snapshot().flow != null },10)
                         settle(panel);capture(panel,"crm-workflow-$theme")
                         tabs.selectedIndex=org.agentworkbench.intellij.ui.WorkbenchPanel.PLAN
-                        panel.setSize(1000,800);settle(panel);capture(panel,"crm-feature-narrow-$theme")
+                        panel.setSize(1000,800);settle(panel);capture(panel,"crm-item-narrow-$theme")
                     } finally { Disposer.dispose(panel) }
                 }
             } finally { com.intellij.ui.JBColor.setDark(wasDark) }

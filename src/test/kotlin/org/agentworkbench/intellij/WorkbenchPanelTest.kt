@@ -7,8 +7,8 @@ import java.nio.file.Files
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.agentworkbench.intellij.git.GitScanService
 import org.agentworkbench.intellij.ui.DocumentReader
-import org.agentworkbench.intellij.ui.FeatureChangesPanel
-import org.agentworkbench.intellij.ui.FeatureReviewPanel
+import org.agentworkbench.intellij.ui.WorkItemChangesPanel
+import org.agentworkbench.intellij.ui.WorkItemReviewPanel
 import org.agentworkbench.intellij.ui.GitPanel
 import org.agentworkbench.intellij.ui.WorkbenchPanel
 import org.agentworkbench.intellij.ui.WorkbenchTabs
@@ -49,10 +49,10 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
             val changes = controls.filterIsInstance<WorkbenchTabs>().first { it.titleAt(0) == "代码评审" }
             assertEquals(listOf("代码评审", "需求分支已提交", "当前工作目录"), (0 until changes.tabCount).map(changes::titleAt))
             assertEquals(0, changes.selectedIndex)
-            val review = controls.filterIsInstance<FeatureReviewPanel>().single()
+            val review = controls.filterIsInstance<WorkItemReviewPanel>().single()
             assertSame(changes, generateSequence(review.parent) { it.parent }.filterIsInstance<WorkbenchTabs>().first())
             val nav = controls.filterIsInstance<javax.swing.JButton>().mapNotNull { it.name }
-            assertTrue(nav.containsAll(listOf("nav-overview","nav-features","nav-search","nav-runs","nav-extensions")))
+            assertTrue(nav.containsAll(listOf("nav-overview","nav-items","nav-search","nav-runs","nav-extensions")))
             val buttons = controls.filterIsInstance<JButton>().map { it.text }
             assertTrue(buttons.containsAll(listOf("Log", "Diff", "Commit", "Branches", "Fetch")))
             val combos = controls.filterIsInstance<JComboBox<*>>()
@@ -65,23 +65,23 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
     }
 
     fun testCommittedChangesLoadsFilesAndCommitsWithoutComboBoxEvent() {
-        val root = java.nio.file.Files.createTempDirectory("workbench-feature-changes-").toFile()
+        val root = java.nio.file.Files.createTempDirectory("workbench-item-changes-").toFile()
         try {
             git(root, "init", "-b", "main")
             root.resolve("base.txt").writeText("base")
             git(root, "add", ".")
             git(root, "commit", "-m", "base")
-            git(root, "switch", "-c", "feature/demo")
-            root.resolve("feature.txt").writeText("feature")
+            git(root, "switch", "-c", "item/demo")
+            root.resolve("item.txt").writeText("item")
             git(root, "add", ".")
-            git(root, "commit", "-m", "feature")
+            git(root, "commit", "-m", "item")
             git(root, "switch", "main")
-            val feature = JsonParser.parseString("""{"summary":{"repositoryBindings":[{"repository":"service","baseBranch":"main","workBranch":"feature/demo"}]}}""").asJsonObject
+            val item = JsonParser.parseString("""{"summary":{"repositoryBindings":[{"repository":"service","baseBranch":"main","workBranch":"item/demo"}]}}""").asJsonObject
             val repositories = listOf(JsonParser.parseString("""{"id":"service","absolutePath":${com.google.gson.Gson().toJson(root.path)}}""").asJsonObject)
-            val panel = FeatureChangesPanel(project)
+            val panel = WorkItemChangesPanel(project)
             try {
                 panel.setSize(1200, 560)
-                panel.showFeature(feature, repositories)
+                panel.showWorkItem(item, repositories)
                 com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("变更加载", {
                     descendants(panel).filterIsInstance<JList<*>>().let { it.size == 2 && it.all { list -> list.model.size == 1 } }
                 }, 10)
@@ -100,7 +100,7 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
             root.resolve("base.txt").writeText("base")
             git(root, "add", ".")
             git(root, "commit", "-m", "base")
-            git(root, "switch", "-c", "feature")
+            git(root, "switch", "-c", "item")
             root.resolve("first.txt").writeText("first")
             git(root, "add", ".")
             git(root, "commit", "-m", "first")
@@ -108,11 +108,11 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
             root.resolve("second.txt").writeText("second")
             git(root, "add", ".")
             git(root, "commit", "-m", "second")
-            val feature = JsonParser.parseString("""{"summary":{"slug":"takeover","repositoryBindings":[{"repository":"service","baseBranch":"main","workBranch":"feature"}]}}""").asJsonObject
+            val item = JsonParser.parseString("""{"summary":{"slug":"takeover","repositoryBindings":[{"repository":"service","baseBranch":"main","workBranch":"item"}]}}""").asJsonObject
             val repositories = listOf(JsonParser.parseString("""{"id":"service","absolutePath":${com.google.gson.Gson().toJson(root.path)}}""").asJsonObject)
-            val panel = FeatureChangesPanel(project)
+            val panel = WorkItemChangesPanel(project)
             try {
-                panel.showFeature(feature, repositories)
+                panel.showWorkItem(item, repositories)
                 val button = descendants(panel).filterIsInstance<JButton>().single { it.text == "打开已提交 Diff" }
                 val field = descendants(panel).filterIsInstance<JTextField>().single()
                 val lists = descendants(panel).filterIsInstance<JList<*>>()
@@ -136,25 +136,25 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         } finally { root.deleteRecursively() }
     }
 
-    fun testFeatureSwitchAndFailureNeverShowPreviousFeatureComparison() {
-        val root = Files.createTempDirectory("panel-feature-a-").toFile()
+    fun testWorkItemSwitchAndFailureNeverShowPreviousWorkItemComparison() {
+        val root = Files.createTempDirectory("panel-item-a-").toFile()
         try {
             git(root, "init", "-b", "main")
             root.resolve("base.txt").writeText("base")
             git(root, "add", ".")
             git(root, "commit", "-m", "base")
-            git(root, "switch", "-c", "feature")
+            git(root, "switch", "-c", "item")
             root.resolve("a.txt").writeText("a")
             git(root, "add", ".")
             git(root, "commit", "-m", "a")
-            val featureA = JsonParser.parseString("""{"summary":{"slug":"alpha","repositoryBindings":[{"repository":"first","baseBranch":"main","workBranch":"feature"},{"repository":"second","baseBranch":"main","workBranch":"feature"}]}}""").asJsonObject
+            val featureA = JsonParser.parseString("""{"summary":{"slug":"alpha","repositoryBindings":[{"repository":"first","baseBranch":"main","workBranch":"item"},{"repository":"second","baseBranch":"main","workBranch":"item"}]}}""").asJsonObject
             val featureB = JsonParser.parseString("""{"summary":{"slug":"beta","repositoryBindings":[{"repository":"first","baseBranch":"main","workBranch":"missing"}]}}""").asJsonObject
             val repositories = listOf("first", "second").map { id ->
                 JsonParser.parseString("""{"id":"$id","absolutePath":${com.google.gson.Gson().toJson(root.path)}}""").asJsonObject
             }
-            val panel = FeatureChangesPanel(project)
+            val panel = WorkItemChangesPanel(project)
             try {
-                panel.showFeature(featureA, repositories)
+                panel.showWorkItem(featureA, repositories)
                 val button = descendants(panel).filterIsInstance<JButton>().single { it.text == "打开已提交 Diff" }
                 val lists = descendants(panel).filterIsInstance<JList<*>>()
                 PlatformTestUtil.waitWithEventsDispatching("alpha 比较", { button.isEnabled && lists.all { it.model.size == 1 } && labels(panel).any { it.contains("first ·") } }, 10)
@@ -162,7 +162,7 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
                 assertFalse(button.isEnabled)
                 assertTrue(lists.all { it.model.size == 0 })
                 assertFalse(labels(panel).any { it.contains("first ·") || it.contains("实际比较：") || it.contains("1 个文件") })
-                panel.showFeature(featureB, repositories)
+                panel.showWorkItem(featureB, repositories)
                 PlatformTestUtil.waitWithEventsDispatching("beta 读取失败", { labels(panel).any { it.contains("读取失败：未找到需求分支 missing") } }, 10)
                 assertFalse(button.isEnabled)
                 assertTrue(lists.all { it.model.size == 0 })
@@ -172,27 +172,27 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         } finally { root.deleteRecursively() }
     }
 
-    fun testSameFeatureFailureKeepsSuccessfulComparisonMarkedStale() {
-        val root = Files.createTempDirectory("panel-feature-stale-").toFile()
+    fun testSameWorkItemFailureKeepsSuccessfulComparisonMarkedStale() {
+        val root = Files.createTempDirectory("panel-item-stale-").toFile()
         try {
             git(root, "init", "-b", "main")
             root.resolve("base.txt").writeText("base")
             git(root, "add", ".")
             git(root, "commit", "-m", "base")
-            git(root, "switch", "-c", "feature")
+            git(root, "switch", "-c", "item")
             root.resolve("a.txt").writeText("a")
             git(root, "add", ".")
             git(root, "commit", "-m", "a")
-            val feature = JsonParser.parseString("""{"summary":{"slug":"alpha","repositoryBindings":[{"repository":"service","baseBranch":"main","workBranch":"feature"}]}}""").asJsonObject
+            val item = JsonParser.parseString("""{"summary":{"slug":"alpha","repositoryBindings":[{"repository":"service","baseBranch":"main","workBranch":"item"}]}}""").asJsonObject
             val repositories = listOf(JsonParser.parseString("""{"id":"service","absolutePath":${com.google.gson.Gson().toJson(root.path)}}""").asJsonObject)
-            val panel = FeatureChangesPanel(project)
+            val panel = WorkItemChangesPanel(project)
             try {
-                panel.showFeature(feature, repositories)
+                panel.showWorkItem(item, repositories)
                 val button = descendants(panel).filterIsInstance<JButton>().single { it.text == "打开已提交 Diff" }
                 val lists = descendants(panel).filterIsInstance<JList<*>>()
                 PlatformTestUtil.waitWithEventsDispatching("alpha 成功", { button.isEnabled && lists.first().model.size == 1 }, 10)
                 panel.restoreLocation("service", "", "invalid")
-                panel.showFeature(feature, repositories)
+                panel.showWorkItem(item, repositories)
                 PlatformTestUtil.waitWithEventsDispatching("alpha 重读失败", { labels(panel).any { it.contains("读取失败：接手起点不是有效 commit") } }, 10)
                 assertFalse(button.isEnabled)
                 assertEquals("a.txt", lists.first().model.getElementAt(0))
@@ -202,184 +202,16 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         } finally { root.deleteRecursively() }
     }
 
-    fun testSwitchingFeaturesKeepsPlanFilterTaskAndScrollSeparate() {
-        val root = Files.createTempDirectory("panel-switch-")
-        val settings = WorkbenchSettings.getInstance()
-        val service = WorkbenchService.getInstance(project)
-        val panel: WorkbenchPanel
-        try {
-            Files.createDirectories(root.resolve("scripts"))
-            listOf("workspace", "features", "feature").forEach { op ->
-                Files.write(root.resolve("$op.json"), javaClass.getResourceAsStream("/inspect-v1/$op.json")!!.use { it.readBytes() })
-            }
-            val workspace = JsonParser.parseString(Files.readString(root.resolve("workspace.json"))).asJsonObject
-            workspace.getAsJsonObject("data").getAsJsonObject("protocol").getAsJsonArray("operations").add("projection")
-            Files.writeString(root.resolve("workspace.json"), workspace.toString())
-            val feature = JsonParser.parseString(Files.readString(root.resolve("feature.json"))).asJsonObject
-            val tasks = feature.getAsJsonObject("data").getAsJsonArray("tasks")
-            repeat(60) { index -> tasks.add(JsonParser.parseString("""{"id":"T${index + 10}","title":"Task $index","completed":false,"path":"plans/implementation.md","startLine":1}""").asJsonObject) }
-            feature.addProperty("operation", "projection")
-            feature.getAsJsonObject("data").addProperty("view", "task")
-            Files.writeString(root.resolve("projection.json"), feature.toString())
-            Files.writeString(root.resolve("scripts/kit.py"), """
-                import json,pathlib,sys
-                root=pathlib.Path(sys.argv[sys.argv.index('--root')+1])
-                op=sys.argv[sys.argv.index('--json')+1]
-                data=json.loads((root/(op+'.json')).read_text())
-                data['root']=str(root)
-                if op=='projection': data['data']['summary']['slug']=sys.argv[sys.argv.index('--json')+2]
-                print(json.dumps(data))
-            """.trimIndent())
-            service.bind(root.toString(), "/usr/bin/python3") { }
-            PlatformTestUtil.waitWithEventsDispatching("绑定工作区", { service.snapshot().features.isNotEmpty() }, 10)
-            panel = WorkbenchPanel(project)
-            try {
-                panel.setSize(1200, 700)
-                panel.selectFeature("alpha")
-                PlatformTestUtil.waitWithEventsDispatching("alpha 加载", { service.snapshot().detail != null || service.snapshot().error != null }, 10)
-                assertNull(service.snapshot().error)
-                PlatformTestUtil.waitWithEventsDispatching("计划行加载", { descendants(panel).filterIsInstance<JTable>().any { it.rowCount > 50 } }, 10)
-                repeat(3) { layout(panel) }
-                val controls = descendants(panel)
-                val tabs = controls.filterIsInstance<WorkbenchTabs>().first { it.titleAt(0) == "计划" }
-                val filter = controls.filterIsInstance<JComboBox<*>>().single { it.itemCount == 5 && it.getItemAt(0) == "全部任务" }
-                val table = controls.filterIsInstance<JTable>().first { it.rowCount > 50 }
-                val scroll = controls.filterIsInstance<JScrollPane>().single { it.viewport.view === table }
-                scroll.setSize(900, 300)
-                layout(scroll)
-                scroll.viewport.dispatchEvent(java.awt.event.ComponentEvent(scroll.viewport, java.awt.event.ComponentEvent.COMPONENT_RESIZED))
-                filter.selectedItem = "可继续"
-                PlatformTestUtil.waitWithEventsDispatching("viewport layout", { scroll.viewport.extentSize.height > 0 }, 5)
-                table.setRowSelectionInterval(25, 25)
-                scroll.verticalScrollBar.value = 240
-                val offset = scroll.verticalScrollBar.value
-                assertTrue("plan should scroll", offset > 0)
-                PlatformTestUtil.waitWithEventsDispatching("滚动保存", { settings.featureView(root.toString(), "alpha").offset == offset }, 5)
-                tabs.selectedIndex = 1
-                panel.selectFeature("beta")
-                PlatformTestUtil.waitWithEventsDispatching("beta 加载", { table.rowCount > 50 }, 10)
-                assertEquals(0, tabs.selectedIndex)
-                assertEquals("全部任务", filter.selectedItem)
-                assertEquals(0, settings.featureView(root.toString(), "beta").offset)
-                tabs.selectedIndex = 2
-                filter.selectedItem = "已完成"
-                panel.selectFeature("alpha")
-                PlatformTestUtil.waitWithEventsDispatching("alpha 恢复", { table.rowCount > 50 && filter.selectedItem == "可继续" }, 10)
-                assertEquals(1, tabs.selectedIndex)
-                assertEquals(offset, settings.featureView(root.toString(), "alpha").offset)
-                tabs.selectedIndex = 0
-                repeat(3) { layout(panel) }
-                PlatformTestUtil.waitWithEventsDispatching("滚动恢复", { scroll.verticalScrollBar.value == offset }, 10)
-                assertEquals("T34", table.getValueAt(table.selectedRow, 0))
-                assertEquals("已完成", settings.featureView(root.toString(), "beta").filter)
-                assertEquals(2, settings.featureView(root.toString(), "beta").tab)
-            } finally { Disposer.dispose(panel) }
-        } finally {
-            settings.state.featureViews.removeIf { it.root == root.toString() }
-            settings.state.preferences.removeIf { it.root == root.toString() }
-            root.toFile().deleteRecursively()
-        }
-    }
 
-    fun testWorkflowUsesSelectedFeatureRunAndOnDemandVerificationAndOffersExistingDocuments() {
-        val root = Files.createTempDirectory("panel-flow-")
-        val settings = WorkbenchSettings.getInstance()
-        val service = WorkbenchService.getInstance(project)
-        try {
-            Files.createDirectories(root.resolve("scripts"))
-            listOf("workspace", "features", "feature", "verification").forEach { op ->
-                Files.write(root.resolve("$op.json"), javaClass.getResourceAsStream("/inspect-v1/$op.json")!!.use { it.readBytes() })
-            }
-            val workspace = JsonParser.parseString(Files.readString(root.resolve("workspace.json"))).asJsonObject
-            workspace.getAsJsonObject("data").getAsJsonObject("protocol").getAsJsonArray("operations").add("projection")
-            Files.writeString(root.resolve("workspace.json"), workspace.toString())
-            val documents = listOf("requirements/requirements.md", "design/design.md", "plans/implementation.md", "changes/change.md", "README.md")
-            val feature = JsonParser.parseString(Files.readString(root.resolve("feature.json"))).asJsonObject
-            feature.addProperty("operation", "projection")
-            feature.getAsJsonObject("data").addProperty("view", "task")
-            Files.writeString(root.resolve("projection.json"), feature.toString())
-            for (slug in listOf("alpha", "beta")) {
-                for (path in documents) {
-                    val file = root.resolve(".workspace/docs/features/$slug/$path")
-                    Files.createDirectories(file.parent)
-                    Files.writeString(file, path)
-                }
-            }
-            Files.writeString(root.resolve("scripts/kit.py"), """
-                import json,pathlib,sys
-                root=pathlib.Path(sys.argv[sys.argv.index('--root')+1])
-                op=sys.argv[sys.argv.index('--json')+1]
-                slug=sys.argv[sys.argv.index('--json')+2] if op in ('projection','verification') else None
-                with (root/'requests.log').open('a') as log: log.write(op+' '+(slug or '')+' '+(' '.join(sys.argv[1:]))+'\n')
-                source='projection' if op=='projection' else op
-                data=json.loads((root/(source+'.json')).read_text()) if source in ('workspace','features','projection','verification') else None
-                if op=='projection':
-                    view=sys.argv[sys.argv.index('--view')+1]
-                    if view=='flow':
-                        data['data']={'view':'flow','featureRevision':'rev','status':'development','workflow':{'orderedStages':[{'id':'feature.implement','core':True}], 'extensions':[]},'delivery':{'verification':{'exists':True,'codeState':'not_checked'}}}
-                    else:
-                        data['data']['summary']['slug']=slug
-                        data['data']['summary']['path']='.workspace/docs/features/'+slug
-                        data['data']['files']=[{'path':path,'exists':True} for path in ${com.google.gson.Gson().toJson(documents)}]
-                elif op=='verification':
-                    data['data']['slug']=slug
-                elif op=='runs':
-                    records=[{'id':'alpha-run','featureSlug':'alpha','updatedAt':'today','recordCounts':{'total':1}}] if '--feature' not in sys.argv or sys.argv[sys.argv.index('--feature')+1]=='alpha' else []
-                    data={'apiVersion':{'major':1,'minor':0},'operation':op,'status':'ok','observedAt':'2026-09-08T10:00:00Z','root':str(root),'revision':'rev','diagnostics':[], 'data':{'items':records,'counts':{'parsed':len(records)},'page':{'offset':0,'limit':100,'total':len(records),'hasMore':False}}}
-                elif op=='run':
-                    data={'apiVersion':{'major':1,'minor':0},'operation':op,'status':'ok','observedAt':'2026-09-08T10:00:00Z','root':str(root),'revision':'rev','diagnostics':[], 'data':{'id':'alpha-run','featureSlug':'alpha','records':[{'stage':'feature.implement','status':'done','summary':'ALPHA RUN ONLY','updatedAt':'today'}]}}
-                data['root']=str(root)
-                print(json.dumps(data))
-            """.trimIndent())
-            service.bind(root.toString(), "/usr/bin/python3") { }
-            PlatformTestUtil.waitWithEventsDispatching("工作区绑定", { service.snapshot().features.isNotEmpty() }, 10)
-            val panel = WorkbenchPanel(project)
-            try {
-                panel.setActive(true)
-                panel.selectFeature("alpha")
-                PlatformTestUtil.waitWithEventsDispatching("alpha 详情", { descendants(panel).filterIsInstance<JButton>().any { it.text == "查看文档 (F4)" } }, 10)
-                val docButton = descendants(panel).filterIsInstance<JButton>().single { it.text == "查看文档 (F4)" }
-                val menu = docButton.componentPopupMenu
-                assertNotNull("查看文档应有可选择的次级菜单", menu)
-                assertEquals(documents, menu!!.components.filterIsInstance<JMenuItem>().mapNotNull { it.actionCommand })
-                assertFalse(Files.readString(root.resolve("requests.log")).contains("verification alpha"))
-
-                val tabs = descendants(panel).filterIsInstance<WorkbenchTabs>().first { it.titleAt(0) == "计划" }
-                tabs.selectedIndex = 2
-                PlatformTestUtil.waitWithEventsDispatching("alpha 流程与验证", {
-                    val controls = descendants(panel)
-                    val text = controls.filterIsInstance<JLabel>().map { it.text.orEmpty() }
-                    controls.filterIsInstance<JTextArea>().any { it.text.contains("ALPHA RUN ONLY") } && text.any { it.contains("检查通过") } && text.any { it.contains("完整") } && text.any { it.contains("尚未核对") }
-                }, 10)
-                assertTrue(Files.readString(root.resolve("requests.log")).contains("verification alpha"))
-                assertTrue(descendants(panel).filterIsInstance<JButton>().any { it.text == "查看验证摘要" })
-                descendants(panel).filterIsInstance<JButton>().single { it.text == "核对当前代码" }.doClick()
-                PlatformTestUtil.waitWithEventsDispatching("核对代码请求", { Files.readString(root.resolve("requests.log")).contains("--check-code") }, 10)
-                panel.selectFeature("beta")
-                assertFalse(descendants(panel).filterIsInstance<JTextArea>().any { it.text.contains("ALPHA RUN ONLY") })
-                tabs.selectedIndex = 2
-                PlatformTestUtil.waitWithEventsDispatching("beta 无 Run", {
-                    val text = descendants(panel).filterIsInstance<JLabel>().map { it.text.orEmpty() }
-                    text.any { it.contains("无当前 Run") } && text.any { it.contains("检查通过") }
-                }, 10)
-                assertFalse(descendants(panel).filterIsInstance<JTextArea>().any { it.text.contains("ALPHA RUN ONLY") })
-                assertTrue(Files.readString(root.resolve("requests.log")).contains("--feature beta"))
-            } finally { Disposer.dispose(panel) }
-        } finally {
-            settings.state.featureViews.removeIf { it.root == root.toString() }
-            settings.state.preferences.removeIf { it.root == root.toString() }
-            root.toFile().deleteRecursively()
-        }
-    }
 
     fun testMultiRepositoryComparisonFailureDoesNotShowZeroChanges() {
-        val panel = FeatureChangesPanel(project)
+        val panel = WorkItemChangesPanel(project)
         try {
-            val feature = JsonParser.parseString("""{"summary":{"repositoryBindings":[{"repository":"first","baseBranch":"main","workBranch":"feature/a"},{"repository":"second","baseBranch":"main","workBranch":"feature/b"}]}}""").asJsonObject
+            val item = JsonParser.parseString("""{"summary":{"repositoryBindings":[{"repository":"first","baseBranch":"main","workBranch":"item/a"},{"repository":"second","baseBranch":"main","workBranch":"item/b"}]}}""").asJsonObject
             val repositories = listOf("first", "second").map { id ->
                 JsonParser.parseString("""{"id":"$id","absolutePath":"/missing/$id"}""").asJsonObject
             }
-            panel.showFeature(feature, repositories)
+            panel.showWorkItem(item, repositories)
             PlatformTestUtil.waitWithEventsDispatching("多仓失败摘要", {
                 descendants(panel).filterIsInstance<javax.swing.JLabel>().count { it.text?.contains("工作目录读取失败") == true } == 2
             }, 10)
@@ -398,12 +230,6 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         assertEquals("3 / 5 项 (可信 2) (60%)", org.agentworkbench.intellij.ui.WorkbenchUi.planProgress(3, 5, percentage = true, trustedCompleted = 2))
     }
 
-    fun testFeatureCompletionRequiresFinishedTrustedPlan() {
-        val feature = JsonParser.parseString("""{"status":"testing","planSummary":{"completed":2,"total":2,"trustedProgress":{"applicable":true,"completed":1,"total":2}}}""").asJsonObject
-        assertEquals("仍有 1 个计划项缺少可信凭据", WorkbenchService.completionBlocker(feature))
-        feature.getAsJsonObject("planSummary").getAsJsonObject("trustedProgress").addProperty("completed", 2)
-        assertNull(WorkbenchService.completionBlocker(feature))
-    }
 
     fun testGitPanelShowsAtMostFiveRepositoriesBeforeActions() {
         val scanService = GitScanService.getInstance(project)

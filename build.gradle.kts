@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "org.agentworkbench"
-version = "0.5.0"
+version = "1.0.0"
 
 repositories {
     mavenCentral()
@@ -54,7 +54,7 @@ intellijPlatform {
         id.set("org.agentworkbench.workbench")
         name.set("Agent Workbench")
         version.set(project.version.toString())
-        description.set("Agent Workbench provides a local workflow and multi-repository Git workbench. 在 IntelliJ Platform 中查看工作区与需求，并可确认完成测试中的 Feature。")
+        description.set("Agent Workbench provides a local workflow and multi-repository Git workbench. 在 IntelliJ Platform 中查看工作区与需求，并可确认完成已满足验收的 WorkItem。")
         ideaVersion {
             sinceBuild.set("252")
             untilBuild.set("262.*")

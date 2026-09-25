@@ -45,7 +45,7 @@ class ReviewClientTest {
     fun githubNotFoundIsRenderedAsPermissionOrRepositoryError() {
         val client = ReviewClient { _, _, _ -> ReviewApiResponse(404, "{\"message\":\"Not Found\"}", null, null) }
 
-        val result = client.find(github(), RemoteProject("github.com", null, "acme/service"), "feature/new", "test-token") as ReviewLookup.Failure
+        val result = client.find(github(), RemoteProject("github.com", null, "acme/service"), "item/new", "test-token") as ReviewLookup.Failure
 
         assertEquals("项目不存在或当前 Token 无权访问", result.message)
     }
@@ -60,7 +60,7 @@ class ReviewClientTest {
         val result = ReviewClient().find(
             host,
             RemoteProject("127.0.0.1", 1, "team/service"),
-            "feature/new",
+            "item/new",
             "test-token",
         )
 
@@ -71,7 +71,7 @@ class ReviewClientTest {
     fun noPullRequestReturnsAnEmptyCompletedResult() {
         val client = ReviewClient { _, _, _ -> ReviewApiResponse(200, "[]", null, null) }
 
-        val result = client.find(github(), RemoteProject("github.com", null, "acme/service"), "feature/new", "test-token") as ReviewLookup.Matches
+        val result = client.find(github(), RemoteProject("github.com", null, "acme/service"), "item/new", "test-token") as ReviewLookup.Matches
 
         assertTrue(result.candidates.isEmpty())
         assertEquals(null, result.incomplete)

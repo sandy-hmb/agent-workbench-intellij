@@ -3,7 +3,7 @@ package org.agentworkbench.intellij
 import com.google.gson.JsonParser
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import org.agentworkbench.intellij.ui.FeatureDashboardPanel
+import org.agentworkbench.intellij.ui.WorkItemDashboardPanel
 import java.awt.Component
 import java.awt.Container
 import java.nio.file.Path
@@ -11,9 +11,9 @@ import javax.swing.JLabel
 import javax.swing.JButton
 
 /** 用 Kit 发布的 inspect 样例驱动仪表盘渲染，覆盖任务进度、凭据提示与关联仓卡片。 */
-class FeatureDashboardPanelTest : BasePlatformTestCase() {
+class WorkItemDashboardPanelTest : BasePlatformTestCase() {
     fun testUpdateRendersProgressAndRepositoryCardsFromFixture() {
-        val fixture = javaClass.getResourceAsStream("/inspect-v1/feature.json")!!.use {
+        val fixture = javaClass.getResourceAsStream("/inspect-v2/task.json")!!.use {
             JsonParser.parseString(it.readBytes().decodeToString()).asJsonObject
         }
         val data = fixture.getAsJsonObject("data")
@@ -21,7 +21,7 @@ class FeatureDashboardPanelTest : BasePlatformTestCase() {
         val tasks = data.getAsJsonArray("tasks").map { it.asJsonObject }
         val bindings = summary.getAsJsonArray("repositoryBindings").map { it.asJsonObject }
 
-        val panel = FeatureDashboardPanel(project, onOpenTask = {}, onOpenDoc = {})
+        val panel = WorkItemDashboardPanel(project, onOpenTask = {}, onOpenDoc = {})
         try {
             panel.update(
                 featureData = data,
@@ -29,11 +29,11 @@ class FeatureDashboardPanelTest : BasePlatformTestCase() {
                 repositoryBindings = bindings,
                 repoRoots = bindings.associate { it.get("repository").asString to Path.of("/synthetic", it.get("repository").asString) },
                 requirementsContent = "# 需求\n\n正文内容",
-                requirementsPath = "requirements/requirements.md",
+                requirementsPath = "change.md",
                 onNavigateTab = {},
             )
             val labels = descendants(panel).filterIsInstance<JLabel>().mapNotNull { it.text }
-            assertTrue("应显示任务进度", labels.any { it.contains("1 / 2") })
+            assertTrue("应显示任务进度", labels.any { it.contains("1 / 1") })
             assertTrue("应显示关联仓库计数", labels.any { it.contains("${bindings.size} 个关联仓库") })
             assertTrue("跳转按钮应描述实际目的地", descendants(panel).filterIsInstance<JButton>().any { it.text == "查看变更 →" })
 
@@ -44,7 +44,7 @@ class FeatureDashboardPanelTest : BasePlatformTestCase() {
                 repositoryBindings = bindings,
                 repoRoots = emptyMap(),
                 requirementsContent = null,
-                requirementsPath = "requirements/requirements.md",
+                requirementsPath = "change.md",
                 onNavigateTab = {},
             )
         } finally {

@@ -40,7 +40,7 @@ import javax.swing.KeyStroke
 import org.agentworkbench.intellij.ui.WorkbenchUi as U
 
 /** 需求分支的已提交变更不取决于实际检出的分支。 */
-internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLayout()),Disposable {
+internal class WorkItemChangesPanel(private val project:Project):JPanel(BorderLayout()),Disposable {
     private val repository=JComboBox<String>()
     private val branchSummary=U.label("选择仓库后查看需求分支",11,U.muted)
     private val message=U.label("选择需求后查看记录分支的已提交变更",12,U.muted)
@@ -315,8 +315,8 @@ internal class FeatureChangesPanel(private val project:Project):JPanel(BorderLay
         clearVisibleComparison()
     }
     fun selectedStartCommit(): String = startField.text.trim()
-    fun showFeature(feature:JsonObject,repositories:List<JsonObject>) {
-        val summary = feature.getAsJsonObject("summary")
+    fun showWorkItem(item:JsonObject,repositories:List<JsonObject>) {
+        val summary = item.getAsJsonObject("summary")
         val identity = summary?.str("slug") ?: summary?.str("path") ?: summary?.toString()
         if (featureIdentity != identity) {
             clearSuccessfulComparison()

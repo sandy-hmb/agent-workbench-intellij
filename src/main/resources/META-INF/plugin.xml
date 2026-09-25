@@ -2,20 +2,19 @@
   <id>org.agentworkbench.workbench</id>
   <name>Agent Workbench</name>
   <vendor url="https://github.com/sandy-hmb/agent-workbench">Agent Workbench</vendor>
-  <description><![CDATA[Agent Workbench provides a local workflow and multi-repository Git workbench. 在 IntelliJ Platform 中查看工作区与需求，并可确认完成测试中的 Feature。]]></description>
+  <description><![CDATA[Agent Workbench provides a local workflow and multi-repository Git workbench. 在 IntelliJ Platform 中查看工作区与需求，并可确认完成测试中的 WorkItem。]]></description>
   <depends>com.intellij.modules.platform</depends>
   <depends>com.intellij.modules.vcs</depends>
   <depends>Git4Idea</depends>
   <resource-bundle>messages.AgentWorkbenchBundle</resource-bundle>
   <extensions defaultExtensionNs="com.intellij">
     <projectService serviceImplementation="org.agentworkbench.intellij.WorkbenchService"/>
-    <projectService serviceImplementation="org.agentworkbench.intellij.review.FeatureReviewService"/>
+    <projectService serviceImplementation="org.agentworkbench.intellij.review.WorkItemReviewService"/>
     <toolWindow id="Agent Workbench" anchor="left" icon="org.agentworkbench.intellij.ui.WorkbenchIcons.ToolWindow" factoryClass="org.agentworkbench.intellij.ui.WorkbenchToolWindowFactory" canCloseContents="false"/>
     <fileEditorProvider implementation="org.agentworkbench.intellij.ui.WorkbenchFileEditorProvider"/>
     <projectConfigurable parentId="tools" id="org.agentworkbench.workbench.settings" displayName="Agent Workbench" instance="org.agentworkbench.intellij.ui.WorkbenchConfigurable"/>
     <notificationGroup id="Agent Workbench" displayType="BALLOON"/>
     <statusBarWidgetFactory id="AgentWorkbenchStatus" implementation="org.agentworkbench.intellij.ui.WorkbenchStatusBarWidgetFactory"/>
-    <externalAnnotator language="ANY" implementationClass="org.agentworkbench.intellij.ui.AgentVerificationAnnotator"/>
   </extensions>
   <actions>
     <action id="AgentWorkbench.OpenWorkbench" class="org.agentworkbench.intellij.ui.OpenWorkbenchAction" text="打开 Agent Workbench 工作台" description="打开 Agent Workbench 工作台" icon="org.agentworkbench.intellij.ui.WorkbenchIcons.ToolWindow">
