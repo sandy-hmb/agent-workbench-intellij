@@ -141,7 +141,7 @@ internal object InspectProtocol {
 
     private fun validate(operation: String, data: JsonObject) = when (operation) {
         "workspace" -> { data.requiredString("mode"); data.requiredObject("identity"); data.requiredArray("repositories").forEach(::repository); data.requiredObject("localContext"); data.requiredObject("configuration"); data.requiredObject("protocol") }
-        "items", "runs" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..200) { "Inspect page limit 无效" }; data.requiredArray("items") }
+        "items", "runs", "artifacts" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..200) { "Inspect page limit 无效" }; data.requiredArray("items") }
         "search" -> { val page = data.requiredObject("page"); require(page.requiredInt("limit") in 1..50) { "Inspect search page limit 无效" }; data.requiredString("query"); data.requiredArray("items"); SearchData.parse(data) }
         "projection" -> {
             data.requiredString("stateRevision")

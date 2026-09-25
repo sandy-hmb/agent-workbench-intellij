@@ -129,6 +129,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         get() = docPanel.documentStatus
     private val verificationBody = U.column()
     private val workflowBody = U.column()
+    private val artifactBody = U.column()
     private val globalRuns = U.column()
     private val globalExtensions = U.column()
     private val historySearch = SearchTextField()
@@ -153,6 +154,9 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
     private var tasks = emptyList<JsonObject>()
     private var displayedTasks = emptyList<JsonObject>()
     private var detailData: JsonObject? = null
+    private var artifactRows = emptyList<JsonObject>()
+    private var artifactHasMore = false
+    private var artifactLoaded = false
     private var verificationData: JsonObject? = null
     private var workflowData: JsonObject? = null
     private var runData: JsonObject? = null
@@ -327,6 +331,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         tabs.addTab("计划", planPanel)
         tabs.addTab("变更", featureChangesTabs)
         tabs.addTab("流程", U.panel().apply { add(U.row(U.flow(U.label("运行记录",11,U.muted), runPicker), runStatus).apply { border = JBUI.Borders.empty(22,0,20,0) }, BorderLayout.NORTH); add(U.page(workflowBody)) })
+        tabs.addTab("交付物", U.page(artifactBody))
 
         val featureNorth = U.column(4, featureHeader, featureDoctorStrip)
         pages.add(U.page(U.padded(U.panel().apply { add(featureNorth, BorderLayout.NORTH); add(tabs) })), "item")
@@ -724,7 +729,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         if (selectedSlug != slug) remember()
         pendingPlanOffset = null
         planOffset = 0
-        selectedSlug=slug;selectedDocument=null;checkedWorkItemRevision=null;checkingCode=false;verificationData=null;workflowData=null;deliveryData=null;runData=null;detailData=null;tasks=emptyList();files=emptyList();lastLocalReqKey=null;lastReviewKey=null;reviewService.invalidate()
+        selectedSlug=slug;selectedDocument=null;checkedWorkItemRevision=null;checkingCode=false;verificationData=null;workflowData=null;deliveryData=null;runData=null;detailData=null;tasks=emptyList();files=emptyList();artifactRows=emptyList();artifactHasMore=false;artifactLoaded=false;lastLocalReqKey=null;lastReviewKey=null;reviewService.invalidate()
         changing=true;runPicker.removeAllItems();changing=false
         runStatus.text="无当前 Run"
         verificationBody.removeAll();renderWorkflow()
@@ -744,7 +749,11 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         }
     }
     private fun showWorkItem(data: JsonObject) {
+        val previousArtifacts = detailData?.get("summary").obj()?.get("artifactSummary").obj()?.str("collectionRevision")
         detailData = data; val summary = data.get("summary").obj() ?: return
+        if (previousArtifacts != summary.get("artifactSummary").obj()?.str("collectionRevision")) {
+            artifactRows = emptyList(); artifactHasMore = false; artifactLoaded = false
+        }
         files = documentFiles(data)
         val related = summary.objects("repositoryBindings").mapNotNull { it.str("repository") }.toSet()
         git.setRelated(related); workingGit.setRelated(related); workingGit.filter("related"); repositoryGit.setRelated(related)
@@ -1334,6 +1343,52 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
             else -> U.badge("有验证记录", U.muted)
         }
     }
+    private fun loadArtifacts(slug: String, reset: Boolean) {
+        if (!service.supports("artifacts")) {
+            artifactBody.removeAll()
+            U.append(artifactBody, U.empty("当前 Kit 不支持交付物分页", "升级 Kit 后可按需读取交付物目录。"), 20)
+            artifactBody.revalidate(); artifactBody.repaint()
+            return
+        }
+        val offset = if (reset) 0 else artifactRows.size
+        service.loadArtifacts(slug, offset) { result ->
+            if (disposed || selectedSlug != slug || route != "item" || tabs.selectedIndex != ARTIFACTS) return@loadArtifacts
+            if (result.error != null) {
+                artifactBody.removeAll()
+                U.append(artifactBody, U.empty("交付物读取失败", result.error), 20)
+                artifactBody.revalidate(); artifactBody.repaint()
+                return@loadArtifacts
+            }
+            val data = result.artifacts?.data.obj()?.takeIf { it.str("slug") == slug } ?: return@loadArtifacts
+            val page = data.objects("items")
+            artifactRows = if (reset) page else artifactRows + page
+            artifactHasMore = data.get("page").obj()?.get("hasMore")?.asBoolean == true
+            artifactLoaded = true
+            state = result
+            renderArtifacts()
+        }
+    }
+    private fun renderArtifacts() {
+        artifactBody.removeAll()
+        val summary = detailData?.get("summary").obj()?.get("artifactSummary").obj()
+        val total = summary?.str("total") ?: "0"
+        U.append(artifactBody, U.section("交付物"), 24)
+        U.append(artifactBody, U.copy("共 $total 项；打开此页后按需读取目录，不读取交付物正文。"), 8)
+        if (!artifactLoaded) {
+            U.append(artifactBody, U.button("加载交付物") { selectedSlug?.let { loadArtifacts(it, true) } }.apply { icon = AllIcons.Actions.Refresh }, 16)
+        } else if (artifactRows.isEmpty()) {
+            U.append(artifactBody, U.empty("暂无可读取交付物", "交付物目录为空，或其中没有受支持的文本格式。"), 20)
+        } else {
+            artifactRows.forEach { row ->
+                val path = row.str("path").orEmpty()
+                val bytes = row.str("bytes") ?: "0"
+                val readable = row.get("readable")?.asBoolean == true
+                U.append(artifactBody, U.row(U.column(3, U.mono(path), U.label("$bytes bytes" + if (readable) "" else " · 仅可在编辑器打开", 10, U.faint)), U.button("打开", true) { showDocument(path) }.apply { icon = AllIcons.General.OpenInToolWindow; isEnabled = readable }), 8)
+            }
+            if (artifactHasMore) U.append(artifactBody, U.button("加载更多") { selectedSlug?.let { loadArtifacts(it, false) } }.apply { icon = AllIcons.Actions.Refresh }, 16)
+        }
+        artifactBody.revalidate(); artifactBody.repaint()
+    }
     private fun loadVisible() {
         if(!active||disposed) return
         when(route) {
@@ -1363,6 +1418,9 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
                         queryVerification()
                         queryWorkflow()
                     }
+                }
+                ARTIFACTS -> selectedSlug?.let { slug ->
+                    if (!artifactLoaded) loadArtifacts(slug, true) else renderArtifacts()
                 }
             }
         }
@@ -1603,6 +1661,7 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         const val REVIEW_CHANGES = 0
         const val COMMITTED_CHANGES = 1
         const val WORKFLOW = 2
+        const val ARTIFACTS = 3
     }
 }
 

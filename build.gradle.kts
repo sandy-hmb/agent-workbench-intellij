@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "org.agentworkbench"
-version = "1.0.1"
+version = "1.1.0"
 
 repositories {
     mavenCentral()
@@ -73,6 +73,7 @@ tasks {
     withType<Test>().configureEach {
         systemProperty("workbench.integrationRoot", providers.gradleProperty("integrationRoot").orElse("").get())
         systemProperty("workbench.integrationEntry", providers.gradleProperty("integrationEntry").orElse("").get())
+        systemProperty("workbench.testPython", System.getenv("PYTHON") ?: "python3")
         if (!providers.gradleProperty("integrationRoot").isPresent) {
             exclude("**/CrmReadOnlyIntegrationTest.class")
         }

@@ -13,6 +13,7 @@ import javax.swing.JLabel
 
 /** Exercise the real producer's targeted views without rebuilding an old complete WorkItem. */
 class WorkbenchVisualTest : BasePlatformTestCase() {
+    private val testPython get() = System.getProperty("workbench.testPython", "python3")
     private fun descendants(root: Component): List<Component> =
         listOf(root) + ((root as? Container)?.components.orEmpty().flatMap { descendants(it) })
 
@@ -36,7 +37,7 @@ class WorkbenchVisualTest : BasePlatformTestCase() {
         """.trimIndent())
         try {
             val service = WorkbenchService.getInstance(project)
-            service.bind(kit.toString(), "/usr/bin/python3") { }
+            service.bind(kit.toString(), testPython) { }
             PlatformTestUtil.waitWithEventsDispatching("workspace", { service.snapshot().items.isNotEmpty() }, 10)
             val panel = WorkbenchPanel(project)
             try {

@@ -37,7 +37,7 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             val response = InspectProtocol.parse(text, operation, root.toString()).getOrElse { failure ->
                 LOG.warn("Inspect $operation 响应不可解析（退出码 $exitCode）：${failure.message}；stderr=${processError.take(2000)}")
                 val diagnostic = if (exitCode != 0) InspectDiagnostic("KIT_PROCESS_FAILED",
-                    "Kit 查询进程失败（退出码 $exitCode），请检查所绑定的 Kit 与 Python 解释器。")
+                    processFailureMessage(exitCode, processError))
                 else InspectDiagnostic("KIT_INVALID_RESPONSE",
                     "Kit 没有返回兼容的工作台查询结果，请确认绑定目录及 Inspect 版本。")
                 throw InspectReadException(listOf(diagnostic))
@@ -45,7 +45,7 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
             if (response.status == "error") throw InspectReadException(response.diagnostics)
             if (exitCode != 0) {
                 LOG.warn("Inspect $operation 进程退出码 $exitCode；stderr=${processError.take(2000)}")
-                throw InspectReadException(listOf(InspectDiagnostic("KIT_PROCESS_FAILED", "Kit 查询进程失败（退出码 $exitCode）。")))
+                throw InspectReadException(listOf(InspectDiagnostic("KIT_PROCESS_FAILED", processFailureMessage(exitCode, processError))))
             }
             response
         } finally {
@@ -94,14 +94,41 @@ internal class KitClient(private val python: Path, private val kitRoot: Path) {
     fun completeWorkItem(slug: String, revision: String): Result<Unit> =
         tool("item", listOf("complete", slug, "--state-revision", revision)).map { }
 
-    private companion object {
+    companion object {
         val LOG = Logger.getInstance(KitClient::class.java)
-        val OPERATIONS = setOf("workspace", "items", "projection", "document", "verification", "handoff", "search", "workflow", "runs", "run")
+        val OPERATIONS = setOf("workspace", "items", "projection", "document", "artifacts", "verification", "handoff", "search", "workflow", "runs", "run")
         val TOOLS = setOf("doctor", "describe", "brief", "item")
         const val TIMEOUT_MILLIS = 12_000
         const val VERIFY_TIMEOUT_MILLIS = 32_000
         const val MAX_STDOUT = 8 * 1024 * 1024
         const val MAX_STDERR = 64 * 1024
+
+        internal fun validateInterpreter(python: Path): Result<Unit> = runCatching {
+            val process = ProcessBuilder(
+                python.absolutePathString(), "-c",
+                "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')",
+            ).redirectErrorStream(true).start()
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                error("KIT_PYTHON_CHECK_TIMEOUT: Python 版本检查超时")
+            }
+            val output = process.inputStream.bufferedReader().use { it.readText().trim() }
+            require(process.exitValue() == 0) { "KIT_PYTHON_CHECK_FAILED: Python 版本检查失败" }
+            val parts = output.split('.').mapNotNull(String::toIntOrNull)
+            require(parts.size == 3) { "KIT_PYTHON_CHECK_FAILED: Python 未返回可识别版本" }
+            require(parts[0] > 3 || parts[0] == 3 && parts[1] >= 10) {
+                "KIT_PYTHON_UNSUPPORTED: 需要 Python >= 3.10，当前为 Python $output"
+            }
+        }
+
+        private fun processFailureMessage(exitCode: Int, stderr: String): String {
+            val structured = stderr.lineSequence()
+                .map(String::trim)
+                .firstOrNull { it.startsWith("KIT_") }
+                ?.take(300)
+            return "Kit 查询进程失败（退出码 $exitCode）。" +
+                (structured?.let { " $it" } ?: " 请检查所绑定的 Kit 与 Python 解释器。")
+        }
 
         /** 所有 Kit 子进程共享的流读取线程池；每次调用新建线程池会造成大量一次性线程。 */
         val STREAM_POOL: java.util.concurrent.ExecutorService = Executors.newCachedThreadPool { runnable ->

@@ -44,7 +44,7 @@ class WorkbenchPanelTest : BasePlatformTestCase() {
         try {
             val controls = descendants(panel)
             val tabs = controls.filterIsInstance<WorkbenchTabs>().first { it.titleAt(0) == "计划" }
-            assertEquals(listOf("计划", "变更", "流程"), (0 until tabs.tabCount).map(tabs::titleAt))
+            assertEquals(listOf("计划", "变更", "流程", "交付物"), (0 until tabs.tabCount).map(tabs::titleAt))
             assertEquals(0, tabs.selectedIndex)
             val changes = controls.filterIsInstance<WorkbenchTabs>().first { it.titleAt(0) == "代码评审" }
             assertEquals(listOf("代码评审", "需求分支已提交", "当前工作目录"), (0 until changes.tabCount).map(changes::titleAt))

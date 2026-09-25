@@ -24,6 +24,17 @@ class KitClientErrorTest {
         } finally { root.toFile().deleteRecursively() }
     }
 
+    @Test fun structuredKitFailureIsShownWithoutOtherStderr() {
+        val root = Files.createTempDirectory("workbench-structured-error-")
+        try {
+            Files.createDirectories(root.resolve("scripts"))
+            Files.writeString(root.resolve("scripts/kit.py"), "import sys; sys.stderr.write('KIT_PYTHON_UNSUPPORTED: 需要 Python >= 3.10\\nsecret=value'); sys.exit(2)")
+            val failure = KitClient(Path.of("/usr/bin/python3"), root).inspect("workspace").exceptionOrNull()
+            assertTrue(failure?.message, failure?.message?.contains("KIT_PYTHON_UNSUPPORTED") == true)
+            assertFalse(failure?.message?.contains("secret=value") == true)
+        } finally { root.toFile().deleteRecursively() }
+    }
+
     @Test fun errorEnvelopeIsAReadFailure() {
         val root = Files.createTempDirectory("workbench-error-")
         Files.createDirectories(root.resolve("scripts"))

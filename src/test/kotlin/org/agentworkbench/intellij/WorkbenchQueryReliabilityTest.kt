@@ -8,6 +8,7 @@ import java.nio.file.Path
 
 /** Actual subprocess tests for pagination and out-of-order responses. */
 class WorkbenchQueryReliabilityTest : BasePlatformTestCase() {
+    private val testPython get() = System.getProperty("workbench.testPython", "python3")
     private fun createKit(): Path {
         val root = Files.createTempDirectory("workbench-query-").toRealPath()
         Files.createDirectories(root.resolve("scripts"))
@@ -20,7 +21,7 @@ class WorkbenchQueryReliabilityTest : BasePlatformTestCase() {
 
     private fun bind(root: Path): WorkbenchService {
         val service = WorkbenchService.getInstance(project)
-        service.bind(root.toString(), "/usr/bin/python3") { }
+        service.bind(root.toString(), testPython) { }
         PlatformTestUtil.waitWithEventsDispatching("binding", { service.snapshot().workspace?.root == root.toString() }, 10)
         return service
     }

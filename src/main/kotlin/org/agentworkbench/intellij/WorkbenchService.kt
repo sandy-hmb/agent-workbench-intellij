@@ -126,6 +126,9 @@ internal class WorkbenchService(private val project: Project) : Disposable {
             if (disposed) return@launch
             val root = runCatching { Path.of(kitRoot).toRealPath().toString() }.getOrElse { return@launch deliver(callback, snapshot.copy(error = "Kit 根目录不可读取。")) }
             val executable = resolvePython(python) ?: return@launch deliver(callback, snapshot.copy(error = "Python 解释器不可执行。"))
+            KitClient.validateInterpreter(Path.of(executable)).exceptionOrNull()?.let { failure ->
+                return@launch deliver(callback, snapshot.copy(error = failure.message ?: "Python 版本检查失败。"))
+            }
             val previousRoot = snapshot.kitRoot
             if (previousRoot != root || snapshot.python != executable) {
                 if (previousRoot != null) cancelRoot(previousRoot)
@@ -182,6 +185,14 @@ internal class WorkbenchService(private val project: Project) : Disposable {
         requestFor("document", "$slug:$path", callback, listOf(slug, "--path", path) + (revision?.let { listOf("--document-revision", it) } ?: emptyList()),
             relevant = { it.selectedDetail == slug && detailGeneration == identity.first && documentGeneration == identity.second }) { state, response ->
             state.copy(document = response, error = null)
+        }
+    }
+
+    fun loadArtifacts(slug: String, offset: Int = 0, limit: Int = 50, callback: (Snapshot) -> Unit) {
+        requestFor("artifacts", "$slug:$offset:$limit", callback,
+            listOf(slug, "--offset", offset.toString(), "--limit", limit.toString()),
+            relevant = { it.selectedDetail == slug }) { state, response ->
+            state.copy(artifacts = response)
         }
     }
     fun loadVerification(slug: String, callback: (Snapshot) -> Unit) = loadVerification(slug, false, callback)
@@ -375,7 +386,7 @@ internal class WorkbenchService(private val project: Project) : Disposable {
 
     override fun dispose() { disposed = true; vfsDebounce.getAndSet(null)?.cancel(); coroutineJobs.values.forEach { it.cancel() }; coroutineJobs.clear() }
 
-    data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val items: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null, val handoff: HandoffData? = null, val search: SearchData? = null, val selectedHandoff: String? = null, val selectedSearch: String? = null, val selectedRun: String? = null, val selectedRunsFilter: String? = null, val change: InspectResponse? = null, val flow: InspectResponse? = null) {
+    data class Snapshot(val kitRoot: String?, val python: String?, val workspace: InspectResponse?, val items: List<JsonObject>, val detail: InspectResponse?, val error: String?, val document: InspectResponse? = null, val artifacts: InspectResponse? = null, val verification: InspectResponse? = null, val workflow: InspectResponse? = null, val runs: InspectResponse? = null, val run: InspectResponse? = null, val selectedDetail: String? = null, val handoff: HandoffData? = null, val search: SearchData? = null, val selectedHandoff: String? = null, val selectedSearch: String? = null, val selectedRun: String? = null, val selectedRunsFilter: String? = null, val change: InspectResponse? = null, val flow: InspectResponse? = null) {
         companion object { fun empty(root: String? = null, python: String? = null) = Snapshot(root, python, null, emptyList(), null, null) }
     }
     companion object {
