@@ -1225,6 +1225,10 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         }
     }
     private var deliveryData: JsonObject? = null
+    private fun workflowEvidence(row: JsonObject): String? = row.objects("evidenceRefs")
+        .filter { it.str("kind") == "workflow" }
+        .joinToString("；") { "${it.str("runId")}/${it.str("stage")}（${it.str("status") ?: "unknown"}）" }
+        .takeIf(String::isNotBlank)
     private fun renderWorkflow() {
         workflowBody.removeAll();val data=workflowData
         U.append(workflowBody, U.section("交付事实"), 12)
@@ -1232,9 +1236,11 @@ internal class WorkbenchPanel(private val project: Project) : JPanel(CardLayout(
         delivery?.get("repositories").obj()?.entrySet()?.forEach { (repository, value) ->
             val row = value.asJsonObject
             U.append(workflowBody, U.label("$repository · 版本 ${row.str("version") ?: "未记录"} · 提测 ${row.str("submission") ?: "未执行"} · 部署 ${row.str("deployment") ?: "未确认"} · 验收 ${row.str("acceptance") ?: "未确认"}", 11, U.muted), 6)
+            workflowEvidence(row)?.let { U.append(workflowBody, U.mono("Workflow 依据：$it", U.faint), 2) }
         }
         delivery?.objects("externalChecks")?.forEach { row ->
             U.append(workflowBody, U.copy("${row.str("description")} · ${row.str("owner")} · ${row.str("status")}"), 6)
+            workflowEvidence(row)?.let { U.append(workflowBody, U.mono("Workflow 依据：$it", U.faint), 2) }
         }
         U.append(workflowBody, verificationBody, 12)
         U.append(workflowBody,U.row(U.flow(U.badge("当前阶段建议"),U.label(U.stage(detailData?.get("progression").obj()?.str("currentStage")),11)),U.label("阶段建议不代表真实部署或验收",10,U.faint)).apply { border=BorderFactory.createCompoundBorder(BottomLine(U.border),JBUI.Borders.empty(0,0,18,0)) })

@@ -22,16 +22,15 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
         assumeTrue("显式 integrationRoot 才读取本机真实工作区", configuredRoot.isNotBlank())
         val root = Path.of(configuredRoot).toRealPath()
         val entry = Path.of(System.getProperty("workbench.integrationEntry")).toRealPath()
+        val python = System.getProperty("workbench.testPython", "python3")
         val temporary = Files.createTempDirectory("workbench-integration-")
         val launcher = temporary.resolve("inspect-python")
         val quote: (String) -> String = { "'" + it.replace("\\", "\\\\").replace("'", "\\'") + "'" }
         Files.writeString(launcher, """
-            #!/usr/bin/python3
-            import os,sys
-            args=sys.argv[1:]
-            if args[:3] != ['-B',${quote(root.resolve("scripts/kit.py").toString())},'inspect']: sys.exit(2)
-            args[1]=${quote(entry.toString())}
-            os.execv('/usr/bin/python3',['/usr/bin/python3',*args])
+            #!/bin/sh
+            if [ "${'$'}1" != "-B" ] || [ "${'$'}2" != ${quote(root.resolve("scripts/kit.py").toString())} ] || [ "${'$'}3" != "inspect" ]; then exit 2; fi
+            shift 2
+            exec ${quote(python)} -B ${quote(entry.toString())} "${'$'}@"
         """.trimIndent() + "\n")
         launcher.toFile().setExecutable(true, true)
         val before = snapshot(root)
@@ -42,7 +41,7 @@ class CrmReadOnlyIntegrationTest : BasePlatformTestCase() {
             val items = responses.getValue("items").data!!.asJsonObject.getAsJsonArray("items")
             assertTrue(items.size() > 0)
             val slug = items[0].asJsonObject.get("slug").asString
-            client.inspect("item", listOf(slug)).getOrThrow()
+            client.inspect("projection", listOf(slug, "--view", "task")).getOrThrow()
             client.inspect("document", listOf(slug, "--path", "README.md")).getOrThrow()
             client.inspect("verification", listOf(slug)).getOrThrow()
             val runs = responses.getValue("runs").data!!.asJsonObject.getAsJsonArray("items")

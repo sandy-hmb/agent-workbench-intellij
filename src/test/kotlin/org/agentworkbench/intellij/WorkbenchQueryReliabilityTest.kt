@@ -12,7 +12,7 @@ class WorkbenchQueryReliabilityTest : BasePlatformTestCase() {
     private fun createKit(): Path {
         val root = Files.createTempDirectory("workbench-query-").toRealPath()
         Files.createDirectories(root.resolve("scripts"))
-        for (name in listOf("workspace", "task", "document", "verification")) {
+        for (name in listOf("workspace", "task", "document", "verification", "artifacts")) {
             val text = javaClass.getResourceAsStream("/inspect-v2/" + name + ".json")!!.use { it.readBytes().decodeToString() }
             Files.writeString(root.resolve(name + ".json"), text)
         }
@@ -51,6 +51,32 @@ class WorkbenchQueryReliabilityTest : BasePlatformTestCase() {
             val service = bind(root)
             PlatformTestUtil.waitWithEventsDispatching("all pages", { service.snapshot().items.size == 201 }, 10)
             assertNull(service.snapshot().error)
+        } finally { cleanup(root) }
+    }
+
+    fun testArtifactsAreRequestedOnlyWhenOpened() {
+        val root = createKit()
+        Files.writeString(root.resolve("scripts/kit.py"), """
+            import json,pathlib,sys
+            root=pathlib.Path(sys.argv[sys.argv.index('--root')+1])
+            op=sys.argv[sys.argv.index('--json')+1]
+            source='task' if op=='projection' else 'workspace' if op in ('workspace','items') else op
+            data=json.loads((root/(source+'.json')).read_text())
+            data.update(root=str(root),operation=op)
+            if op=='items': data['data']={'collectionRevision':'empty','items':[],'counts':{},'page':{'offset':0,'limit':200,'total':0,'hasMore':False}}
+            if op=='projection': data['data']['summary']['slug']='demo'; data['data']['slug']='demo'
+            if op=='artifacts': data['data']['slug']='demo'
+            with (root/'requests.log').open('a') as log: log.write(op+'\\n')
+            print(json.dumps(data))
+        """.trimIndent())
+        try {
+            val service = bind(root)
+            service.loadWorkItem("demo") { }
+            PlatformTestUtil.waitWithEventsDispatching("task", { service.snapshot().detail?.data?.asJsonObject?.get("slug")?.asString == "demo" }, 10)
+            assertFalse(Files.readString(root.resolve("requests.log")).contains("artifacts"))
+            service.loadArtifacts("demo") { }
+            PlatformTestUtil.waitWithEventsDispatching("artifacts", { service.snapshot().artifacts?.data?.asJsonObject?.get("slug")?.asString == "demo" }, 10)
+            assertEquals("artifacts/report.json", service.snapshot().artifacts?.data?.asJsonObject?.getAsJsonArray("items")?.first()?.asJsonObject?.get("path")?.asString)
         } finally { cleanup(root) }
     }
 

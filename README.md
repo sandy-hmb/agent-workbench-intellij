@@ -4,7 +4,7 @@ Agent Workbench 是 IntelliJ IDEA 和 Rebased 中以只读为主的工作流工�
 
 插件主要解决“查看和定位”问题：不用在工作流仓、多个业务仓和 Git 工具之间反复切换。它不提供 Agent 终端，不调用模型，不创建 WorkItem；唯一的状态写操作是用户二次确认后，通过 Kit 既有入口将 已满足验收的 WorkItem 标记为 `done`。
 
-插件 1.1.0 与 Kit 2.2.0 / Inspect 2.2 配套，增加 Python 版本诊断和按需交付物分页；旧协议会明确拒绝。
+插件 1.1.1 与 Kit 2.2.1 / Inspect 2.2 配套，增加 Python 版本诊断和按需交付物分页；旧协议会明确拒绝。
 
 ## 它和 agent-workbench 的关系
 
@@ -33,13 +33,13 @@ IDEA / Rebased
 ### 前置条件
 
 - IntelliJ IDEA 2025.2（Build 252）或 Rebased 1.1.12（Build 262）及兼容版本。
-- Kit 版本 `2.2.0`，与插件 `1.1.0` 配套使用；仅接受当前 item 格式，不提供旧格式迁移。
-- 可执行的 Python 3，通常是 `python3`。
+- Kit 版本 `2.2.1`，与插件 `1.1.1` 配套使用；仅接受当前 item 格式，不提供旧格式迁移。
+- 可执行的 Python 3.10+，通常是 `python3`。
 - 当前项目为受信任项目，并已安装宿主自带的 Git 支持。
 
 ### 安装开发包
 
-可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-1.0.1.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
+可以直接使用预构建的插件包（如 `build/distributions/agent-workbench-intellij-1.1.1.zip`），通过 `Settings | Plugins | ⚙ | Install Plugin from Disk...` 安装并重启 IDE。
 
 如需从源码构建，在本仓执行：
 
@@ -50,7 +50,7 @@ JAVA_HOME='/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home' \
   test buildPlugin
 ```
 
-安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `1.0.1`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
+安装包会生成在 `build/distributions/agent-workbench-intellij-<版本号>.zip`（版本号见 `build.gradle.kts` 的 `version`，当前为 `1.1.1`）。在 IDEA 或 Rebased 中打开 `Settings | Plugins | ⚙ | Install Plugin from Disk...`，选择这个 ZIP，重启 IDE。
 
 ### 首次打开工作区
 
@@ -119,7 +119,7 @@ GitHub 使用细粒度 Token 时授予目标仓 `Pull requests: Read`；GitLab T
 
 ### 提示“Inspect 信封格式无效”
 
-旧 Kit 缺少当前插件必需的定向投影时会提示版本不兼容。将绑定的工作流仓升级到与插件 `1.1.0` 配套的 Kit `2.2.0`，再点击“绑定并刷新”：
+旧 Kit 缺少当前插件必需的定向投影时会提示版本不兼容。将绑定的工作流仓升级到与插件 `1.1.1` 配套的 Kit `2.2.1`，再点击“绑定并刷新”：
 
 ```bash
 cd /path/to/agent-workbench
@@ -135,7 +135,7 @@ python3 scripts/kit.py inspect --root . --api-major 2 --json workspace
 
 ### 工作台没有数据
 
-确认项目已受信任、Kit 根目录包含 `scripts/kit.py` 和 `.workspace/`，Python 路径可执行，并且 Kit 为配套的 `2.2.0`。Python 必须为 3.10 或更高版本；未初始化的 Kit 只显示维护模式信息，插件不会自动初始化工作区。
+确认项目已受信任、Kit 根目录包含 `scripts/kit.py` 和 `.workspace/`，Python 路径可执行，并且 Kit 为配套的 `2.2.1`。Python 必须为 3.10 或更高版本；未初始化的 Kit 只显示维护模式信息，插件不会自动初始化工作区。
 
 ### 为什么没有所有父目录项目
 
